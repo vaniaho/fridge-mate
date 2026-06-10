@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>小鲜 - 智能冰箱</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部玻璃态头部 -->
+        <header class="glass-header">
+            <div>
+                <h1>我的小鲜</h1>
+                <div class="status-indicator">
+                    <span class="dot"></span>
+                    <span id="conn-status">正在连接...</span>
+                </div>
+            </div>
+            <div class="sys-dashboard">
+                <div class="sys-item" title="可用内存"><span class="icon">💾</span><span id="sys-heap">-- KB</span></div>
+                <div class="sys-item" title="WiFi信号"><span class="icon">📶</span><span id="sys-wifi">-- dBm</span></div>
+            </div>
+        </header>
+        
+        <!-- 导航栏 -->
+        <nav class="glass-nav">
+            <button class="nav-btn active" data-target="view-inventory">库存</button>
+            <button class="nav-btn" data-target="view-history">记录</button>
+            <button class="nav-btn" data-target="view-chat">AI 助手</button>
+            <button class="nav-btn" data-target="view-settings">设置</button>
+        </nav>
+
+        <main class="content-area">
+            <!-- 视图: 库存 -->
+            <section id="view-inventory" class="view active">
+                <div class="section-header">
+                    <h2>按类别浏览</h2>
+                    <span class="item-count" id="item-count">0 项</span>
+                </div>
+                <div id="category-container">
+                    <!-- 分类区块由 JS 动态生成 -->
+                </div>
+                <!-- 悬浮添加按钮 -->
+                <button class="fab-btn" id="add-btn" aria-label="添加食材">
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                </button>
+            </section>
+
+            <!-- 视图: 记录 -->
+            <section id="view-history" class="view">
+                <div class="section-header">
+                    <h2>存取记录</h2>
+                </div>
+                <div class="history-list" id="history-list">
+                    <!-- 记录由 JS 生成 -->
+                </div>
+            </section>
+
+            <!-- 视图: AI 助手 -->
+            <section id="view-chat" class="view">
+                <div class="chat-container glass-panel-inner">
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="msg bot-msg">您好！我是小鲜，您可以打字告诉我您放了什么或者拿了什么。</div>
+                    </div>
+                    <form class="chat-input-area" id="chat-form">
+                        <input type="text" id="chat-input" placeholder="例如：帮我放进去两个苹果" required autocomplete="off">
+                        <button type="submit" class="btn btn-primary" id="chat-send">发送</button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- 视图: 设置 -->
+            <section id="view-settings" class="view">
+                <div class="settings-form glass-panel-inner">
+                    <form id="settings-form">
+                        <h3>网络配置 (WiFi)</h3>
+                        <div class="input-group">
+                            <label>SSID</label>
+                            <input type="text" id="set-ssid">
+                        </div>
+                        <div class="input-group">
+                            <label>密码</label>
+                            <input type="password" id="set-pass">
+                        </div>
+                        <br>
+                        <h3>AI 大模型配置</h3>
+                        <div class="input-group">
+                            <label>API URL</label>
+                            <input type="text" id="set-url" placeholder="https://api.openai.com/v1/chat/completions">
+                        </div>
+                        <div class="input-group">
+                            <label>API Key</label>
+                            <input type="password" id="set-key">
+                        </div>
+                        <div class="input-group">
+                            <label>模型名称</label>
+                            <input type="text" id="set-model" placeholder="gpt-4o-mini">
+                        </div>
+                        <div class="modal-actions">
+                            <button type="submit" class="btn btn-primary">保存设置 (需重启生效)</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+        </main>
+
+        <!-- 添加食材弹窗 -->
+        <div class="modal-overlay" id="add-modal">
+            <div class="modal glass-panel">
+                <h3>添加食材</h3>
+                <form id="add-form">
+                    <div class="input-group">
+                        <label for="name">食材名称</label>
+                        <input type="text" id="name" required placeholder="例如：苹果">
+                    </div>
+                    <div class="input-group">
+                        <label for="category">分类</label>
+                        <select id="category">
+                            <option value="水果">水果</option>
+                            <option value="蔬菜">蔬菜</option>
+                            <option value="肉类">肉类</option>
+                            <option value="饮品">饮品</option>
+                            <option value="其他">其他</option>
+                        </select>
+                    </div>
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="quantity">数量</label>
+                            <input type="number" id="quantity" required min="1" value="1">
+                        </div>
+                        <div class="input-group">
+                            <label for="expire">保质期(天)</label>
+                            <input type="number" id="expire" required min="1" value="7">
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" id="cancel-btn">取消</button>
+                        <button type="submit" class="btn btn-primary">确认添加</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

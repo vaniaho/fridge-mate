@@ -1,0 +1,38 @@
+menu "Smart Fridge Configuration"
+
+    menu "WiFi Settings"
+        config SMART_FRIDGE_DEFAULT_WIFI_SSID
+            string "Default WiFi SSID"
+            default ""
+            help
+                Default WiFi SSID. Can be overridden at runtime via NVS.
+
+        config SMART_FRIDGE_DEFAULT_WIFI_PASS
+            string "Default WiFi Password"
+            default ""
+            help
+                Default WiFi password. Can be overridden at runtime via NVS.
+    endmenu
+
+    menu "LLM API Settings"
+        config SMART_FRIDGE_DEFAULT_LLM_API_URL
+            string "Default LLM API URL"
+            default "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+            help
+                Default LLM API endpoint URL. Can be overridden at runtime via NVS.
+
+        config SMART_FRIDGE_DEFAULT_LLM_API_KEY
+            string "Default LLM API Key"
+            default ""
+            help
+                Default LLM API key. Can be overridden at runtime via NVS.
+                WARNING: Do not commit real API keys to version control.
+
+        config SMART_FRIDGE_DEFAULT_LLM_MODEL
+            string "Default LLM Model Name"
+            default "doubao-seed-1.6-250615"
+            help
+                Default LLM model name used in API requests.
+    endmenu
+
+endmenu
