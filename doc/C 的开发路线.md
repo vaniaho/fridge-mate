@@ -9,14 +9,14 @@
 - **`system_events.h`**: 定义全局事件流，如 `EVT_WAKE_WORD_DETECTED`, `EVT_VISION_INFER_DONE`, `EVT_VOICE_CMD_RCVD`, `EVT_LLM_RESPONSE_READY` 等。
 - **`task_manager.cpp`**: 创建 FreeRTOS 任务（队列容量 20，栈 8192），集成 `gui_bridge` 桥接调用，将 A（视觉）和 B（语音）的数据分发给 C 的业务逻辑。
 
-### 1.2 系统级公共服务 (`components/system_services/`) ★ 新增
+### 1.2 系统级公共服务 (`components/system_services/`) 
 
 - **`wifi_manager.c`**: WiFi 连接管理（ESP-Hosted via C6 协处理器），从 `ai_agent` 中迁出。
 - **`sd_storage.c`**: SD 卡 SPI 模式驱动 + FATFS 挂载，从 `inventory_system` 中迁出。
 - **`credentials_manager.c`**: 基于 NVS 的凭证管理器，支持运行时修改（为 GUI 设置页面预留）。
 - **`Kconfig`**: 在 `idf.py menuconfig` 中提供默认 WiFi 和 LLM API 配置。
 
-### 1.3 GUI 事件桥接层 (`components/gui_bridge/`) ★ 新增
+### 1.3 GUI 事件桥接层 (`components/gui_bridge/`) 
 
 - **`gui_bridge.c`**: 系统事件与 GUI 框架的抽象桥接层。
 - 当前为 Stub 实现（仅日志输出），待 GUI 框架（LVGL 或 ESP-Brookesia）确定后接入。
@@ -43,7 +43,7 @@
 - **`rtc_time.c`**: 结合 SNTP 服务，在连网时同步网络时间，并写入外置 RTC 芯片。
 - **`power_manage.c`**: 配置 PIR 传感器的 GPIO 中断。处理 5 分钟超时逻辑，进入 Light Sleep 模式。
 
-### 1.7 Web 控制面板 (`components/web_panel/` - 可选)
+### 1.7 Web 控制面板 (`components/web_panel/` )
 
 - 基于 `esp_http_server` 提供 RESTful API，供手机端查看和管理。
 
@@ -66,7 +66,7 @@ typedef enum {
 } sys_event_type_t;
 ```
 
-### 2.2 凭证管理接口 (`credentials_manager.h`) ★ 新增
+### 2.2 凭证管理接口 (`credentials_manager.h`)&#x20;
 
 ```cpp
 // 初始化（读取 NVS，回退到 Kconfig 默认值）
@@ -103,7 +103,7 @@ struct IngredientItem {
 
 ## 3. 分阶段实施路径 (开发方案)
 
-### Phase 1: 基础设施与全局调度 ✅ 已完成
+### Phase 1: 基础设施与全局调度
 
 - **成果**：
   1. `main/system_events.h` 全局事件定义
@@ -112,25 +112,24 @@ struct IngredientItem {
   4. `system_services/wifi_manager.c` ESP-Hosted WiFi 连接
   5. `system_services/credentials_manager.c` NVS 凭证管理
 
-### Phase 2: 本地业务与存储引擎 (部分完成)
+### Phase 2: 本地业务与存储引擎
 
-- **已完成**：
+- **目标：**
   - 食材 CRUD API（基于 JSON + 内存缓存）
   - 临期检测功能（阈值可配置）
   - SD 卡回退机制（纯内存模式）
-- **待完成**：
   - RTC 时钟 & NTP 对时
   - 食材历史记录与消耗速率计算
   - 本地食谱匹配算法
 
-### Phase 3: 云端大模型打通 ✅ 已完成
+### Phase 3: 云端大模型打通&#x20;
 
 - **成果**：
   1. `llm_client.cpp` 大模型 REST API 接入（支持豆包、Moonshot 等）
   2. `prompt_builder.cpp` System Prompt 构建 + JSON 解析
   3. API 凭证通过 `credentials_manager` 安全管理，不再硬编码
 
-### Phase 3.5: GUI 集成 ★ 新增阶段
+### Phase 3.5: GUI 集成&#x20;
 
 - **目标**：将 GUI 框架集成到主工程，让业务逻辑有前端展示载体。
 - **任务**：

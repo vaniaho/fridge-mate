@@ -6,6 +6,8 @@
 #include <string.h>
 #include <algorithm>
 #include <set>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "InvHistory";
 static const char *HISTORY_PATH = "/sdcard/history.json";
@@ -19,6 +21,7 @@ namespace inventory {
 // 内存中的历史记录缓存
 static std::vector<HistoryRecord> history_cache;
 static bool history_initialized = false;
+static SemaphoreHandle_t history_mutex = NULL;  // 保护 history_cache 的多线程并发访问
 
 // ======== 私有工具函数 ========
 
@@ -163,6 +166,13 @@ static bool history_load_from_disk() {
 bool history_init() {
     if (history_initialized) return true;
 
+    // 创建互斥锁
+    history_mutex = xSemaphoreCreateMutex();
+    if (history_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create history mutex");
+        return false;
+    }
+
     if (!history_load_from_disk()) {
         ESP_LOGE(TAG, "Failed to load history from disk.");
         return false;
@@ -182,6 +192,8 @@ void history_append(HistoryAction action, const std::string& item_name, int quan
         return;
     }
 
+    xSemaphoreTake(history_mutex, portMAX_DELAY);
+
     HistoryRecord record;
     time(&record.timestamp);
     record.action = action;
@@ -199,10 +211,14 @@ void history_append(HistoryAction action, const std::string& item_name, int quan
     }
 
     history_save_to_disk();
+    xSemaphoreGive(history_mutex);
 }
 
 std::vector<HistoryRecord> history_get_recent(int days) {
     std::vector<HistoryRecord> result;
+    if (!history_initialized) return result;
+
+    xSemaphoreTake(history_mutex, portMAX_DELAY);
 
     time_t now;
     time(&now);
@@ -214,7 +230,9 @@ std::vector<HistoryRecord> history_get_recent(int days) {
         }
     }
 
-    // 按时间倒序排列（最新的在前）
+    xSemaphoreGive(history_mutex);
+
+    // 排序在锁外进行（result 是本地副本）
     std::sort(result.begin(), result.end(),
         [](const HistoryRecord& a, const HistoryRecord& b) {
             return a.timestamp > b.timestamp;
@@ -225,6 +243,9 @@ std::vector<HistoryRecord> history_get_recent(int days) {
 
 std::vector<HistoryRecord> history_get_by_item(const std::string& item_name, int days) {
     std::vector<HistoryRecord> result;
+    if (!history_initialized) return result;
+
+    xSemaphoreTake(history_mutex, portMAX_DELAY);
 
     time_t now;
     time(&now);
@@ -235,6 +256,8 @@ std::vector<HistoryRecord> history_get_by_item(const std::string& item_name, int
             result.push_back(record);
         }
     }
+
+    xSemaphoreGive(history_mutex);
 
     std::sort(result.begin(), result.end(),
         [](const HistoryRecord& a, const HistoryRecord& b) {
@@ -251,6 +274,8 @@ ConsumptionRate compute_consumption_rate(const std::string& item_name, int windo
     rate.total_consumed = 0;
     rate.daily_rate = 0.0f;
 
+    if (history_mutex) xSemaphoreTake(history_mutex, portMAX_DELAY);
+
     time_t now;
     time(&now);
     time_t cutoff = now - (window_days * 24 * 3600);
@@ -264,6 +289,8 @@ ConsumptionRate compute_consumption_rate(const std::string& item_name, int windo
         }
     }
 
+    if (history_mutex) xSemaphoreGive(history_mutex);
+
     // 计算日均消耗量
     if (window_days > 0) {
         rate.daily_rate = (float)rate.total_consumed / (float)window_days;
@@ -273,6 +300,8 @@ ConsumptionRate compute_consumption_rate(const std::string& item_name, int windo
 }
 
 std::vector<ConsumptionRate> compute_all_consumption_rates(int window_days) {
+    if (history_mutex) xSemaphoreTake(history_mutex, portMAX_DELAY);
+
     time_t now;
     time(&now);
     time_t cutoff = now - (window_days * 24 * 3600);
@@ -285,13 +314,30 @@ std::vector<ConsumptionRate> compute_all_consumption_rates(int window_days) {
         }
     }
 
-    // 2. 逐个计算消耗速率
+    // 2. 逐个计算消耗速率（在锁内直接访问 history_cache，避免重复加锁）
     std::vector<ConsumptionRate> rates;
     for (const auto& name : consumed_items) {
-        rates.push_back(compute_consumption_rate(name, window_days));
+        ConsumptionRate rate;
+        rate.item_name = name;
+        rate.window_days = window_days;
+        rate.total_consumed = 0;
+        rate.daily_rate = 0.0f;
+        for (const auto& record : history_cache) {
+            if (record.action == HistoryAction::REMOVE &&
+                record.item_name == name &&
+                record.timestamp >= cutoff) {
+                rate.total_consumed += record.quantity;
+            }
+        }
+        if (window_days > 0) {
+            rate.daily_rate = (float)rate.total_consumed / (float)window_days;
+        }
+        rates.push_back(rate);
     }
 
-    // 3. 按 daily_rate 降序排列（消耗最快的排在前面）
+    if (history_mutex) xSemaphoreGive(history_mutex);
+
+    // 3. 按 daily_rate 降序排列（排序在锁外进行）
     std::sort(rates.begin(), rates.end(),
         [](const ConsumptionRate& a, const ConsumptionRate& b) {
             return a.daily_rate > b.daily_rate;

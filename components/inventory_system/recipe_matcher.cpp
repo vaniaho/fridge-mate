@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "RecipeMatcher";
 static const char *RECIPES_PATH = "/sdcard/recipes.json";
@@ -16,6 +18,7 @@ namespace inventory {
 // 内存中的食谱缓存
 static std::vector<Recipe> recipe_cache;
 static bool recipe_initialized = false;
+static SemaphoreHandle_t recipe_mutex = NULL;  // 保护 recipe_cache 的多线程并发访问
 
 // ======== 内置默认食谱 ========
 
@@ -302,6 +305,13 @@ static RecipeMatch match_single_recipe(const Recipe& recipe,
 bool recipe_init() {
     if (recipe_initialized) return true;
 
+    // 创建互斥锁
+    recipe_mutex = xSemaphoreCreateMutex();
+    if (recipe_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create recipe mutex");
+        return false;
+    }
+
     if (!recipe_load_from_disk()) {
         ESP_LOGI(TAG, "No recipes file found, writing defaults...");
         write_default_recipes();
@@ -317,12 +327,14 @@ std::vector<RecipeMatch> recipe_match_available() {
     auto inventory = get_all_ingredients();
     std::vector<RecipeMatch> results;
 
+    xSemaphoreTake(recipe_mutex, portMAX_DELAY);
     for (const auto& recipe : recipe_cache) {
         RecipeMatch match = match_single_recipe(recipe, inventory);
         if (match.coverage >= 1.0f) {
             results.push_back(match);
         }
     }
+    xSemaphoreGive(recipe_mutex);
 
     ESP_LOGI(TAG, "Found %d fully available recipes.", results.size());
     return results;
@@ -332,6 +344,7 @@ std::vector<RecipeMatch> recipe_match_near(int max_missing) {
     auto inventory = get_all_ingredients();
     std::vector<RecipeMatch> results;
 
+    xSemaphoreTake(recipe_mutex, portMAX_DELAY);
     for (const auto& recipe : recipe_cache) {
         RecipeMatch match = match_single_recipe(recipe, inventory);
         // 包含完全满足的 (missing=0) 和差 N 样以内的
@@ -339,8 +352,9 @@ std::vector<RecipeMatch> recipe_match_near(int max_missing) {
             results.push_back(match);
         }
     }
+    xSemaphoreGive(recipe_mutex);
 
-    // 排序：coverage 降序，missing_count 升序
+    // 排序在锁外进行（results 是本地副本）
     std::sort(results.begin(), results.end(),
         [](const RecipeMatch& a, const RecipeMatch& b) {
             if (a.coverage != b.coverage) return a.coverage > b.coverage;
@@ -352,7 +366,10 @@ std::vector<RecipeMatch> recipe_match_near(int max_missing) {
 }
 
 std::vector<Recipe> recipe_get_all() {
-    return recipe_cache;
+    if (recipe_mutex) xSemaphoreTake(recipe_mutex, portMAX_DELAY);
+    auto copy = recipe_cache;
+    if (recipe_mutex) xSemaphoreGive(recipe_mutex);
+    return copy;
 }
 
 } // namespace inventory

@@ -23,6 +23,7 @@ static esp_err_t get_inventory_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(obj, "category", item.category.c_str());
         cJSON_AddNumberToObject(obj, "quantity", item.quantity);
         cJSON_AddNumberToObject(obj, "expire_days", item.expire_days);
+        cJSON_AddNumberToObject(obj, "entry_time", item.entry_time);
         cJSON_AddItemToArray(root, obj);
     }
     const char *sys_info = cJSON_PrintUnformatted(root);
@@ -70,6 +71,21 @@ static esp_err_t post_inventory_handler(httpd_req_t *req) {
             cJSON *qty = cJSON_GetObjectItem(root, "quantity");
             if (name && qty) {
                 smart_fridge::inventory::remove_ingredient(name->valuestring, qty->valueint);
+            }
+        } else if (strcmp(action->valuestring, "update") == 0) {
+            cJSON *name = cJSON_GetObjectItem(root, "name");
+            cJSON *qty = cJSON_GetObjectItem(root, "quantity");
+            cJSON *cat = cJSON_GetObjectItem(root, "category");
+            cJSON *exp = cJSON_GetObjectItem(root, "expire_days");
+            cJSON *ent = cJSON_GetObjectItem(root, "entry_time");
+            if (name && qty && cat && exp && ent) {
+                smart_fridge::inventory::update_ingredient(
+                    name->valuestring,
+                    qty->valueint,
+                    cat->valuestring,
+                    exp->valueint,
+                    (time_t)ent->valuedouble
+                );
             }
         }
     }
@@ -264,7 +280,7 @@ void register_api_routes(httpd_handle_t server) {
 struct async_resp_arg {
     httpd_handle_t hd;
     int fd;
-    const char *msg;
+    char *msg;  // 使用 strdup 分配的独立副本，发送后需 free
 };
 
 static void ws_async_send(void *arg) {
@@ -278,6 +294,7 @@ static void ws_async_send(void *arg) {
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
 
     httpd_ws_send_frame_async(hd, fd, &ws_pkt);
+    free(resp_arg->msg);   // 释放 strdup 分配的消息副本
     free(resp_arg);
 }
 
@@ -292,10 +309,16 @@ void broadcast_ws_message(httpd_handle_t server, const char* msg) {
             int client_info = httpd_ws_get_fd_info(server, client_fds[i]);
             if (client_info == HTTPD_WS_CLIENT_WEBSOCKET) {
                 struct async_resp_arg *arg = (struct async_resp_arg *)malloc(sizeof(struct async_resp_arg));
-                arg->hd = server;
-                arg->fd = client_fds[i];
-                arg->msg = msg;
-                httpd_queue_work(server, ws_async_send, arg);
+                if (arg) {
+                    arg->hd = server;
+                    arg->fd = client_fds[i];
+                    arg->msg = strdup(msg);  // 复制消息内容，避免异步发送时原指针已失效
+                    if (arg->msg) {
+                        httpd_queue_work(server, ws_async_send, arg);
+                    } else {
+                        free(arg);
+                    }
+                }
             }
         }
     }

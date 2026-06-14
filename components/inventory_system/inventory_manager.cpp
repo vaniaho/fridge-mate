@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "InventoryMgr";
 static const char *DB_PATH = "/sdcard/inventory.json";
@@ -15,6 +17,8 @@ namespace inventory {
 static std::vector<IngredientItem> inventory_cache;
 static bool is_initialized = false;
 static bool sd_card_available = false; // SD 卡是否可用，不可用时回退到纯内存模式
+static SemaphoreHandle_t inventory_mutex = NULL; // 保护 inventory_cache 的多线程并发访问
+static int next_id = 0;  // 自增 ID 计数器，避免删除后 ID 碰撞
 
 /**
  * @brief 将当前缓存中的食材列表序列化为 JSON 并写入 SD 卡
@@ -127,7 +131,14 @@ static bool load_from_disk() {
 
 bool init_database() {
     if (is_initialized) return true;
-    
+
+    // 0. 创建互斥锁，保护多线程并发访问
+    inventory_mutex = xSemaphoreCreateMutex();
+    if (inventory_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create inventory mutex");
+        return false;
+    }
+
     // 1. 尝试初始化 SD 卡硬件
     if (sd_card_init() != 0) {
         ESP_LOGW(TAG, "SD Card initialization failed! Falling back to memory-only mode.");
@@ -144,6 +155,13 @@ bool init_database() {
     }
     
     is_initialized = true;
+
+    // 计算下一个可用 ID（避免删除后 ID 碰撞）
+    for (const auto& item : inventory_cache) {
+        if (item.id >= next_id) {
+            next_id = item.id + 1;
+        }
+    }
 
     // 3. 初始化历史记录模块
     if (!history_init()) {
@@ -163,6 +181,8 @@ bool init_database() {
 bool add_ingredient(const std::string& name, const std::string& category, int quantity, int expire_days) {
     if (!is_initialized) return false;
 
+    xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+
     // 获取当前时间戳（这依赖于 rtc_time.c 模块已经同步了 NTP 或 RTC）
     time_t now;
     time(&now);
@@ -171,20 +191,21 @@ bool add_ingredient(const std::string& name, const std::string& category, int qu
     for (auto& item : inventory_cache) {
         if (item.name == name) {
             item.quantity += quantity;
-            // 覆盖原有存入时间和过期时间（默认新老食材合并，按最新保质期算，或者可以改成按最早保质期算）
+            // 覆盖原有存入时间和过期时间（默认新老食材合并，按最新保质期算）
             item.entry_time = now;
             item.expire_days = expire_days;
             item.expire_time = now + (expire_days * 24 * 3600);
             ESP_LOGI(TAG, "Updated existing ingredient: %s, new qty: %d", name.c_str(), item.quantity);
             history_append(HistoryAction::ADD, name, quantity);
-            return save_to_disk();
+            bool result = save_to_disk();
+            xSemaphoreGive(inventory_mutex);
+            return result;
         }
     }
 
     // 缓存中不存在，创建新记录
     IngredientItem new_item;
-    // 简单的自增 ID，生产环境中可以考虑 UUID 避免冲突
-    new_item.id = inventory_cache.size() + 1; 
+    new_item.id = next_id++;  // 使用自增计数器，避免删除后 ID 碰撞
     new_item.name = name;
     new_item.category = category;
     new_item.quantity = quantity;
@@ -197,11 +218,15 @@ bool add_ingredient(const std::string& name, const std::string& category, int qu
     ESP_LOGI(TAG, "Added new ingredient: %s (Qty: %d)", name.c_str(), quantity);
     history_append(HistoryAction::ADD, name, quantity);
     
-    return save_to_disk();
+    bool result = save_to_disk();
+    xSemaphoreGive(inventory_mutex);
+    return result;
 }
 
 bool remove_ingredient(const std::string& name, int quantity) {
     if (!is_initialized) return false;
+
+    xSemaphoreTake(inventory_mutex, portMAX_DELAY);
 
     for (auto it = inventory_cache.begin(); it != inventory_cache.end(); ++it) {
         if (it->name == name) {
@@ -217,21 +242,70 @@ bool remove_ingredient(const std::string& name, int quantity) {
                 inventory_cache.erase(it);
             }
             history_append(HistoryAction::REMOVE, name, actual_removed);
-            return save_to_disk();
+            bool result = save_to_disk();
+            xSemaphoreGive(inventory_mutex);
+            return result;
         }
     }
     
+    xSemaphoreGive(inventory_mutex);
     ESP_LOGW(TAG, "Ingredient '%s' not found, nothing removed.", name.c_str());
     return false;
 }
 
+bool update_ingredient(const std::string& name, int new_quantity, const std::string& new_category, int new_expire_days, time_t new_entry_time) {
+    if (!is_initialized) return false;
+    
+    // 如果数量 <= 0，等同于全部取出
+    if (new_quantity <= 0) {
+        return remove_ingredient(name, 999999);
+    }
+
+    xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+
+    for (auto& item : inventory_cache) {
+        if (item.name == name) {
+            // 计算数量变化，补充历史记录
+            if (new_quantity > item.quantity) {
+                history_append(HistoryAction::ADD, name, new_quantity - item.quantity);
+            } else if (new_quantity < item.quantity) {
+                history_append(HistoryAction::REMOVE, name, item.quantity - new_quantity);
+            }
+            
+            item.quantity = new_quantity;
+            if (!new_category.empty()) {
+                item.category = new_category;
+            }
+            item.expire_days = new_expire_days;
+            item.entry_time = new_entry_time;
+            item.expire_time = new_entry_time + (new_expire_days * 24 * 3600);
+            
+            ESP_LOGI(TAG, "Updated %s info: qty=%d, cat=%s, expire_days=%d", name.c_str(), new_quantity, item.category.c_str(), new_expire_days);
+            
+            bool result = save_to_disk();
+            xSemaphoreGive(inventory_mutex);
+            return result;
+        }
+    }
+
+    xSemaphoreGive(inventory_mutex);
+    ESP_LOGW(TAG, "Update failed: Ingredient '%s' not found.", name.c_str());
+    return false;
+}
+
 std::vector<IngredientItem> get_all_ingredients() {
-    return inventory_cache;
+    // 允许在 init 之前调用（返回空列表），故需判断 mutex 是否已创建
+    if (inventory_mutex) xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+    auto copy = inventory_cache;
+    if (inventory_mutex) xSemaphoreGive(inventory_mutex);
+    return copy;
 }
 
 std::vector<IngredientItem> check_expiring_ingredients(int warning_days_threshold) {
     std::vector<IngredientItem> expiring_items;
     if (!is_initialized) return expiring_items;
+
+    xSemaphoreTake(inventory_mutex, portMAX_DELAY);
 
     time_t now;
     time(&now);
@@ -255,6 +329,7 @@ std::vector<IngredientItem> check_expiring_ingredients(int warning_days_threshol
         }
     }
     
+    xSemaphoreGive(inventory_mutex);
     return expiring_items;
 }
 

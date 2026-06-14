@@ -20,6 +20,15 @@ const countSpan = document.getElementById('item-count');
 const addModal = document.getElementById('add-modal');
 const addForm = document.getElementById('add-form');
 
+// Edit Modal
+const editModal = document.getElementById('edit-modal');
+const editForm = document.getElementById('edit-form');
+const editCancelBtn = document.getElementById('edit-cancel-btn');
+
+// Search & Sort
+const searchInput = document.getElementById('search-input');
+const sortSelect = document.getElementById('sort-select');
+
 // Chat
 const chatMessages = document.getElementById('chat-messages');
 const chatForm = document.getElementById('chat-form');
@@ -78,12 +87,34 @@ async function fetchInventory() {
 }
 
 function renderInventory() {
-    countSpan.textContent = `${state.inventory.length} 项`;
+    let filteredList = state.inventory;
+    
+    // 1. Search Filter
+    const searchTerm = searchInput.value.trim().toLowerCase();
+    if (searchTerm) {
+        filteredList = filteredList.filter(item => item.name.toLowerCase().includes(searchTerm));
+    }
+
+    // 2. Sort
+    const sortVal = sortSelect.value;
+    filteredList.sort((a, b) => {
+        // Calculate approx expire timestamp if backend doesn't provide it
+        const aExp = a.entry_time + (a.expire_days * 24 * 3600);
+        const bExp = b.entry_time + (b.expire_days * 24 * 3600);
+        
+        if (sortVal === 'expire_asc') return aExp - bExp;
+        if (sortVal === 'expire_desc') return bExp - aExp;
+        if (sortVal === 'entry_desc') return b.entry_time - a.entry_time;
+        if (sortVal === 'entry_asc') return a.entry_time - b.entry_time;
+        return 0;
+    });
+
+    countSpan.textContent = `${filteredList.length} 项`;
     categoryContainer.innerHTML = '';
     
     // Group by category
     const grouped = {};
-    state.inventory.forEach(item => {
+    filteredList.forEach(item => {
         if (!grouped[item.category]) grouped[item.category] = [];
         grouped[item.category].push(item);
     });
@@ -104,13 +135,20 @@ function renderInventory() {
             else if (item.expire_days <= 3) expireClass = 'expire-warning';
             
             card.innerHTML = `
-                <button class="remove-btn" onclick="removeIngredient('${item.name}')" title="取出1个">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                </button>
-                <div class="item-icon">${iconMap[item.category] || '📦'}</div>
+                <div class="card-header">
+                    <div class="item-icon">${iconMap[item.category] || '📦'}</div>
+                    <div class="card-actions">
+                        <button class="icon-btn edit" onclick="openEditModal('${item.name}')" title="编辑">✏️</button>
+                        <button class="icon-btn remove" onclick="removeAllIngredient('${item.name}', ${item.quantity})" title="全部取出">🗑️</button>
+                    </div>
+                </div>
                 <div class="item-name">${item.name}</div>
-                <div class="item-quantity">数量: ${item.quantity}</div>
                 <div class="item-expire ${expireClass}">保质期 ${item.expire_days} 天</div>
+                <div class="item-controls">
+                    <button class="qty-btn" onclick="decreaseIngredient('${item.name}', ${item.quantity})">-</button>
+                    <span class="item-quantity">${item.quantity}</span>
+                    <button class="qty-btn" onclick="increaseIngredient('${item.name}')">+</button>
+                </div>
             `;
             grid.appendChild(card);
         });
@@ -126,6 +164,65 @@ async function removeIngredient(name) {
         body: JSON.stringify({ action: 'remove', name: name, quantity: 1 })
     });
     fetchInventory();
+}
+
+async function decreaseIngredient(name, currentQty) {
+    if (currentQty <= 1) {
+        if (!confirm(`确定要取出最后 1 个 ${name} 吗？这会将其从列表中移除。`)) return;
+    }
+    await fetch('/api/inventory', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', name: name, quantity: 1 })
+    });
+    fetchInventory();
+}
+
+async function increaseIngredient(name) {
+    // We can just call add with quantity 1, but we need to pass category and expire_days
+    // A better way is to find the item in state and use its existing metadata
+    const item = state.inventory.find(i => i.name === name);
+    if (!item) return;
+    await fetch('/api/inventory', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', name: name, category: item.category, quantity: 1, expire_days: item.expire_days })
+    });
+    fetchInventory();
+}
+
+async function removeAllIngredient(name, currentQty) {
+    if (!confirm(`确定要清空全部 ${currentQty} 个 ${name} 吗？`)) return;
+    await fetch('/api/inventory', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', name: name, quantity: currentQty })
+    });
+    fetchInventory();
+}
+
+// Unix to YYYY-MM-DDTHH:mm string for datetime-local
+function unixToDatetimeLocal(unixSeconds) {
+    const d = new Date(unixSeconds * 1000);
+    // Pad to standard local ISO string
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// string to Unix seconds
+function datetimeLocalToUnix(str) {
+    return Math.floor(new Date(str).getTime() / 1000);
+}
+
+function openEditModal(name) {
+    const item = state.inventory.find(i => i.name === name);
+    if (!item) return;
+    
+    document.getElementById('edit-name').value = item.name;
+    document.getElementById('edit-name-display').value = item.name;
+    document.getElementById('edit-category').value = item.category;
+    document.getElementById('edit-quantity').value = item.quantity;
+    document.getElementById('edit-expire').value = item.expire_days;
+    document.getElementById('edit-entry-time').value = unixToDatetimeLocal(item.entry_time);
+    
+    editModal.classList.add('active');
 }
 
 // === History ===
@@ -239,6 +336,15 @@ function setupEventListeners() {
         addModal.classList.remove('active');
         addForm.reset();
     });
+    
+    editCancelBtn.addEventListener('click', () => {
+        editModal.classList.remove('active');
+        editForm.reset();
+    });
+
+    // Search and Sort Listeners
+    searchInput.addEventListener('input', renderInventory);
+    sortSelect.addEventListener('change', renderInventory);
     addForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const data = {
@@ -258,6 +364,30 @@ function setupEventListeners() {
             if (document.getElementById('view-history').classList.contains('active')) fetchHistory();
         }
     });
+
+    editForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = {
+            action: 'update',
+            name: document.getElementById('edit-name').value,
+            category: document.getElementById('edit-category').value,
+            quantity: parseInt(document.getElementById('edit-quantity').value),
+            expire_days: parseInt(document.getElementById('edit-expire').value),
+            entry_time: datetimeLocalToUnix(document.getElementById('edit-entry-time').value)
+        };
+        const res = await fetch('/api/inventory', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+        });
+        if (res.ok) {
+            editModal.classList.remove('active');
+            editForm.reset();
+            fetchInventory();
+            if (document.getElementById('view-history').classList.contains('active')) fetchHistory();
+        } else {
+            alert('修改失败');
+        }
+    });
+
     setInterval(fetchStatus, 5000); // Poll status every 5s
 }
 
@@ -275,4 +405,9 @@ function setupWebSocket() {
 }
 
 window.removeIngredient = removeIngredient;
+window.decreaseIngredient = decreaseIngredient;
+window.increaseIngredient = increaseIngredient;
+window.removeAllIngredient = removeAllIngredient;
+window.openEditModal = openEditModal;
+
 init();

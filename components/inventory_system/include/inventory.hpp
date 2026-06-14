@@ -53,6 +53,12 @@ namespace inventory {
     bool remove_ingredient(const std::string& name, int quantity);
 
     /**
+     * @brief 直接修改食材信息 (数量、分类、保质期、存入时间)
+     * 若 new_quantity <= 0，则直接删除该食材
+     */
+    bool update_ingredient(const std::string& name, int new_quantity, const std::string& new_category, int new_expire_days, time_t new_entry_time);
+
+    /**
      * @brief 获取当前所有食材列表 (用于手机 App 或 本地屏幕显示)
      */
     std::vector<IngredientItem> get_all_ingredients();

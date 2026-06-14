@@ -36,8 +36,17 @@
             <!-- 视图: 库存 -->
             <section id="view-inventory" class="view active">
                 <div class="section-header">
-                    <h2>按类别浏览</h2>
+                    <h2>库存清单</h2>
                     <span class="item-count" id="item-count">0 项</span>
+                </div>
+                <div class="inventory-controls">
+                    <input type="text" id="search-input" placeholder="🔍 搜索食材...">
+                    <select id="sort-select">
+                        <option value="expire_asc">到期时间 (由近到远)</option>
+                        <option value="expire_desc">到期时间 (由远到近)</option>
+                        <option value="entry_desc">存入时间 (最新)</option>
+                        <option value="entry_asc">存入时间 (最早)</option>
+                    </select>
                 </div>
                 <div id="category-container">
                     <!-- 分类区块由 JS 动态生成 -->
@@ -138,6 +147,54 @@
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" id="cancel-btn">取消</button>
                         <button type="submit" class="btn btn-primary">确认添加</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <!-- 编辑食材弹窗 -->
+        <div class="modal-overlay" id="edit-modal">
+            <div class="modal glass-panel">
+                <h3>编辑食材</h3>
+                <form id="edit-form">
+                    <input type="hidden" id="edit-name">
+                    <div class="input-group">
+                        <label>食材名称</label>
+                        <input type="text" id="edit-name-display" disabled>
+                    </div>
+                    <div class="input-group">
+                        <label for="edit-category">分类</label>
+                        <select id="edit-category" required>
+                            <option value="水果">水果</option>
+                            <option value="蔬菜">蔬菜</option>
+                            <option value="肉类">肉类</option>
+                            <option value="蛋奶">蛋奶</option>
+                            <option value="海鲜">海鲜</option>
+                            <option value="豆制品">豆制品</option>
+                            <option value="主食">主食</option>
+                            <option value="调味品">调味品</option>
+                            <option value="饮品">饮品</option>
+                            <option value="零食">零食</option>
+                            <option value="冻品">冻品</option>
+                            <option value="其他">其他</option>
+                        </select>
+                    </div>
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="edit-quantity">数量</label>
+                            <input type="number" id="edit-quantity" required min="0">
+                        </div>
+                        <div class="input-group">
+                            <label for="edit-expire">保质期(天)</label>
+                            <input type="number" id="edit-expire" required min="1">
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label for="edit-entry-time">存入时间</label>
+                        <input type="datetime-local" id="edit-entry-time" required>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" id="edit-cancel-btn">取消</button>
+                        <button type="submit" class="btn btn-primary">保存修改</button>
                     </div>
                 </form>
             </div>
