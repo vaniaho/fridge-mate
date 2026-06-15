@@ -11,6 +11,8 @@ const views = document.querySelectorAll('.view');
 const navBtns = document.querySelectorAll('.nav-btn');
 const dot = document.querySelector('.dot');
 const connStatus = document.getElementById('conn-status');
+const sysTime = document.getElementById('sys-time');
+const sysSdcard = document.getElementById('sys-sdcard');
 const sysHeap = document.getElementById('sys-heap');
 const sysWifi = document.getElementById('sys-wifi');
 
@@ -38,7 +40,13 @@ const chatSend = document.getElementById('chat-send');
 // Settings
 const settingsForm = document.getElementById('settings-form');
 
-const iconMap = { '水果': '🍎', '蔬菜': '🥬', '肉类': '🥩', '饮品': '🥛', '其他': '📦' };
+// Recipes
+const recipeContainer = document.getElementById('recipe-container');
+const recipeModal = document.getElementById('recipe-modal');
+const recipeForm = document.getElementById('recipe-form');
+const recipeIngList = document.getElementById('recipe-ingredients-list');
+
+const iconMap = { '水果': '🍎', '蔬菜': '🥬', '肉类': '🥩', '饮品': '🥛', '其他': '📦', '家常菜': '🍲', '汤类': '🥣', '主食': '🍚', '素菜': '🥗' };
 
 function init() {
     setupRouter();
@@ -61,6 +69,7 @@ function setupRouter() {
             // Lazy load specific view data
             if (target === 'view-history') fetchHistory();
             if (target === 'view-settings') fetchSettings();
+            if (target === 'view-recipes') fetchRecipes();
         });
     });
 }
@@ -72,6 +81,14 @@ async function fetchStatus() {
         const data = await res.json();
         sysHeap.textContent = Math.round(data.free_heap / 1024) + ' KB';
         sysWifi.textContent = data.wifi_rssi + ' dBm';
+        if (data.rtc_synced) {
+            sysTime.textContent = data.sys_time.split(' ')[1] || data.sys_time;
+        } else {
+            sysTime.textContent = '未同步';
+            sysTime.style.color = '#ff6b6b';
+        }
+        sysSdcard.textContent = data.sd_available ? '正常' : '未挂载';
+        sysSdcard.style.color = data.sd_available ? 'inherit' : '#ff6b6b';
     } catch (e) {
         console.warn('Status fetch failed');
     }
@@ -262,6 +279,69 @@ function addChatMessage(text, isUser = false) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+// === Recipes ===
+async function fetchRecipes() {
+    try {
+        const res = await fetch('/api/recipes/match');
+        const data = await res.json();
+        renderRecipes(data);
+    } catch (e) { console.error(e); }
+}
+
+function renderRecipes(matches) {
+    recipeContainer.innerHTML = '';
+    if (matches.length === 0) {
+        recipeContainer.innerHTML = '<div class="text-muted" style="text-align:center;padding:20px;">暂无食谱数据</div>';
+        return;
+    }
+    
+    matches.forEach(match => {
+        const r = match.recipe;
+        const isReady = match.missing_count === 0;
+        
+        let ingHtml = r.ingredients.map(ing => {
+            const isMissing = match.missing_items.includes(ing.name);
+            return `<span class="recipe-ing ${isMissing ? 'missing' : 'have'}">${ing.name}x${ing.min_quantity}</span>`;
+        }).join('');
+
+        const card = document.createElement('div');
+        card.className = `item-card recipe-card ${isReady ? 'ready' : 'not-ready'}`;
+        card.innerHTML = `
+            <div class="card-header">
+                <div class="item-icon">${iconMap[r.category] || '🍽️'}</div>
+                <div class="card-actions">
+                    <button class="icon-btn edit" onclick="openRecipeEdit('${r.name}')" title="编辑">✏️</button>
+                    <button class="icon-btn remove" onclick="deleteRecipe('${r.name}')" title="删除">🗑️</button>
+                </div>
+            </div>
+            <div class="item-name">${r.name} <span style="font-size:0.8rem;color:#888;">${r.category}</span></div>
+            <div class="recipe-progress">
+                <div class="progress-bar"><div class="progress-fill" style="width: ${match.coverage * 100}%;"></div></div>
+                <div class="progress-text">${isReady ? '食材齐全！' : `还差 ${match.missing_count} 样`}</div>
+            </div>
+            <div class="recipe-ings">${ingHtml}</div>
+            <div class="recipe-brief">${r.brief}</div>
+        `;
+        recipeContainer.appendChild(card);
+    });
+}
+
+async function deleteRecipe(name) {
+    if(!confirm(`确定要删除食谱 ${name} 吗？`)) return;
+    await fetch('/api/recipes', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ action: 'remove', name: name })
+    });
+    fetchRecipes();
+}
+
+function openRecipeEdit(name) {
+    // 简单的方案：从当前的 DOM 列表中抓取，或者再请求一次全量。
+    // 这里我们直接通过后端 /api/recipes/match (或保存一份全局 state) 获取
+    // 为了简单，我们只实现打开空弹窗让用户新增，因为完全复用 DOM 也不难，这里简化。
+    alert("请先实现在前端维护完整的 recipes 列表来支持编辑填充。此处为演示。");
+}
+
 chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = chatInput.value.trim();
@@ -336,10 +416,36 @@ function setupEventListeners() {
         addModal.classList.remove('active');
         addForm.reset();
     });
+
+    document.getElementById('history-fab-btn').addEventListener('click', () => {
+        // Find the history nav button if we still want to keep nav active states, 
+        // or just directly switch view. We removed it from nav, so just switch view.
+        navBtns.forEach(b => b.classList.remove('active'));
+        views.forEach(v => v.classList.remove('active'));
+        document.getElementById('view-history').classList.add('active');
+        fetchHistory();
+    });
     
     editCancelBtn.addEventListener('click', () => {
         editModal.classList.remove('active');
         editForm.reset();
+    });
+
+    document.getElementById('add-recipe-btn').addEventListener('click', () => {
+        document.getElementById('recipe-modal-title').textContent = "新增食谱";
+        document.getElementById('recipe-old-name').value = '';
+        recipeForm.reset();
+        recipeIngList.innerHTML = '';
+        addRecipeIngRow(); // add at least one row
+        recipeModal.classList.add('active');
+    });
+
+    document.getElementById('recipe-cancel-btn').addEventListener('click', () => {
+        recipeModal.classList.remove('active');
+    });
+
+    document.getElementById('add-recipe-ing-btn').addEventListener('click', () => {
+        addRecipeIngRow();
     });
 
     // Search and Sort Listeners
@@ -388,7 +494,52 @@ function setupEventListeners() {
         }
     });
 
+    recipeForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const oldName = document.getElementById('recipe-old-name').value;
+        const data = {
+            action: oldName ? 'update' : 'add',
+            old_name: oldName,
+            name: document.getElementById('recipe-name').value,
+            category: document.getElementById('recipe-category').value,
+            brief: document.getElementById('recipe-brief').value,
+            ingredients: []
+        };
+        const rows = recipeIngList.querySelectorAll('.recipe-ing-row');
+        rows.forEach(row => {
+            const n = row.querySelector('.ing-name').value;
+            const q = row.querySelector('.ing-qty').value;
+            if(n) {
+                data.ingredients.push({ name: n, min_quantity: parseInt(q) });
+            }
+        });
+
+        const res = await fetch('/api/recipes', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+        });
+        if (res.ok) {
+            recipeModal.classList.remove('active');
+            fetchRecipes();
+        } else {
+            alert('保存失败');
+        }
+    });
+
     setInterval(fetchStatus, 5000); // Poll status every 5s
+}
+
+function addRecipeIngRow(name = '', qty = 1) {
+    const div = document.createElement('div');
+    div.className = 'recipe-ing-row';
+    div.style.display = 'flex';
+    div.style.gap = '8px';
+    div.style.marginBottom = '8px';
+    div.innerHTML = `
+        <input type="text" class="ing-name" placeholder="食材名" required value="${name}" style="flex:2;">
+        <input type="number" class="ing-qty" placeholder="数量" min="1" required value="${qty}" style="flex:1;">
+        <button type="button" class="btn btn-secondary btn-small" onclick="this.parentElement.remove()">X</button>
+    `;
+    recipeIngList.appendChild(div);
 }
 
 function setupWebSocket() {
@@ -409,5 +560,26 @@ window.decreaseIngredient = decreaseIngredient;
 window.increaseIngredient = increaseIngredient;
 window.removeAllIngredient = removeAllIngredient;
 window.openEditModal = openEditModal;
+window.openRecipeEdit = async (name) => {
+    // To implement edit, we can fetch all recipes (not match) or find in match array
+    try {
+        const res = await fetch('/api/recipes/match');
+        const data = await res.json();
+        const match = data.find(m => m.recipe.name === name);
+        if(!match) return;
+        
+        document.getElementById('recipe-modal-title').textContent = "编辑食谱";
+        document.getElementById('recipe-old-name').value = match.recipe.name;
+        document.getElementById('recipe-name').value = match.recipe.name;
+        document.getElementById('recipe-category').value = match.recipe.category;
+        document.getElementById('recipe-brief').value = match.recipe.brief;
+        recipeIngList.innerHTML = '';
+        match.recipe.ingredients.forEach(ing => {
+            addRecipeIngRow(ing.name, ing.min_quantity);
+        });
+        recipeModal.classList.add('active');
+    } catch(e) {}
+};
+window.deleteRecipe = deleteRecipe;
 
 init();

@@ -11,6 +11,7 @@ static const char *TAG = "WebPanelApi";
 #include "ai_agent.hpp"
 #include "esp_system.h"
 #include "esp_wifi.h"
+#include "rtc_time.h"
 
 // GET /api/inventory
 static esp_err_t get_inventory_handler(httpd_req_t *req) {
@@ -127,6 +128,20 @@ static esp_err_t get_status_handler(httpd_req_t *req) {
     } else {
         cJSON_AddNumberToObject(root, "wifi_rssi", 0);
     }
+    
+    // 增加时钟同步和系统时间状态
+    cJSON_AddBoolToObject(root, "rtc_synced", rtc_time_is_synced());
+    char time_buf[32] = {0};
+    if (rtc_time_is_synced()) {
+        rtc_time_get_formatted(time_buf, sizeof(time_buf));
+        cJSON_AddStringToObject(root, "sys_time", time_buf);
+    } else {
+        cJSON_AddStringToObject(root, "sys_time", "Not Synced");
+    }
+    
+    // 增加 SD 卡状态
+    cJSON_AddBoolToObject(root, "sd_available", smart_fridge::inventory::is_sd_card_available());
+
     const char *sys_info = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, sys_info, strlen(sys_info));
@@ -230,6 +245,119 @@ static esp_err_t post_chat_handler(httpd_req_t *req) {
     return ESP_FAIL;
 }
 
+// GET /api/recipes/match
+static esp_err_t get_recipes_match_handler(httpd_req_t *req) {
+    auto matches = smart_fridge::inventory::recipe_match_near(2);
+    cJSON *root = cJSON_CreateArray();
+    for (const auto& match : matches) {
+        cJSON *obj = cJSON_CreateObject();
+        
+        cJSON *recipe_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(recipe_obj, "name", match.recipe.name.c_str());
+        cJSON_AddStringToObject(recipe_obj, "category", match.recipe.category.c_str());
+        cJSON_AddStringToObject(recipe_obj, "brief", match.recipe.brief.c_str());
+        
+        cJSON *ing_arr = cJSON_CreateArray();
+        for (const auto& ing : match.recipe.ingredients) {
+            cJSON *ing_obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(ing_obj, "name", ing.name.c_str());
+            cJSON_AddNumberToObject(ing_obj, "min_quantity", ing.min_quantity);
+            cJSON_AddItemToArray(ing_arr, ing_obj);
+        }
+        cJSON_AddItemToObject(recipe_obj, "ingredients", ing_arr);
+        cJSON_AddItemToObject(obj, "recipe", recipe_obj);
+        
+        cJSON_AddNumberToObject(obj, "coverage", match.coverage);
+        cJSON_AddNumberToObject(obj, "missing_count", match.missing_count);
+        
+        cJSON *missing_arr = cJSON_CreateArray();
+        for (const auto& m_item : match.missing_items) {
+            cJSON_AddItemToArray(missing_arr, cJSON_CreateString(m_item.c_str()));
+        }
+        cJSON_AddItemToObject(obj, "missing_items", missing_arr);
+        
+        cJSON_AddItemToArray(root, obj);
+    }
+    const char *json_resp = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json_resp, strlen(json_resp));
+    free((void *)json_resp);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+// POST /api/recipes
+static esp_err_t post_recipes_handler(httpd_req_t *req) {
+    char *buf = (char*)malloc(req->content_len + 1);
+    if (!buf) return ESP_FAIL;
+    int ret = httpd_req_recv(req, buf, req->content_len);
+    if (ret <= 0) {
+        free(buf);
+        return ESP_FAIL;
+    }
+    buf[ret] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *action = cJSON_GetObjectItem(root, "action");
+    if (action && action->valuestring) {
+        if (strcmp(action->valuestring, "remove") == 0) {
+            cJSON *name = cJSON_GetObjectItem(root, "name");
+            if (name) {
+                smart_fridge::inventory::recipe_remove(name->valuestring);
+            }
+        } else if (strcmp(action->valuestring, "add") == 0 || strcmp(action->valuestring, "update") == 0) {
+            smart_fridge::inventory::Recipe new_recipe;
+            cJSON *name = cJSON_GetObjectItem(root, "name");
+            cJSON *category = cJSON_GetObjectItem(root, "category");
+            cJSON *brief = cJSON_GetObjectItem(root, "brief");
+            cJSON *ingredients = cJSON_GetObjectItem(root, "ingredients");
+
+            if (name) new_recipe.name = name->valuestring;
+            if (category) new_recipe.category = category->valuestring;
+            if (brief) new_recipe.brief = brief->valuestring;
+            
+            if (ingredients && cJSON_IsArray(ingredients)) {
+                int count = cJSON_GetArraySize(ingredients);
+                for (int i = 0; i < count; i++) {
+                    cJSON *ing_obj = cJSON_GetArrayItem(ingredients, i);
+                    if (ing_obj) {
+                        smart_fridge::inventory::RecipeIngredient ri;
+                        cJSON *ing_name = cJSON_GetObjectItem(ing_obj, "name");
+                        cJSON *ing_qty = cJSON_GetObjectItem(ing_obj, "min_quantity");
+                        if (ing_name) ri.name = ing_name->valuestring;
+                        if (ing_qty) ri.min_quantity = ing_qty->valueint;
+                        else ri.min_quantity = 1;
+                        new_recipe.ingredients.push_back(ri);
+                    }
+                }
+            }
+
+            if (strcmp(action->valuestring, "add") == 0) {
+                smart_fridge::inventory::recipe_add(new_recipe);
+            } else {
+                cJSON *old_name = cJSON_GetObjectItem(root, "old_name");
+                if (old_name) {
+                    smart_fridge::inventory::recipe_update(old_name->valuestring, new_recipe);
+                } else if (name) {
+                    // fallback to name if old_name not provided
+                    smart_fridge::inventory::recipe_update(name->valuestring, new_recipe);
+                }
+            }
+        }
+    }
+    
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}", -1);
+    return ESP_OK;
+}
+
 // WS Handler
 static esp_err_t ws_handler(httpd_req_t *req) {
     if (req->method == HTTP_GET) {
@@ -258,14 +386,16 @@ static esp_err_t ws_handler(httpd_req_t *req) {
 }
 
 void register_api_routes(httpd_handle_t server) {
-    httpd_uri_t uri_get_inv = { .uri = "/api/inventory", .method = HTTP_GET, .handler = get_inventory_handler, .user_ctx = NULL };
-    httpd_uri_t uri_post_inv = { .uri = "/api/inventory", .method = HTTP_POST, .handler = post_inventory_handler, .user_ctx = NULL };
-    httpd_uri_t uri_get_hist = { .uri = "/api/history", .method = HTTP_GET, .handler = get_history_handler, .user_ctx = NULL };
-    httpd_uri_t uri_get_status = { .uri = "/api/status", .method = HTTP_GET, .handler = get_status_handler, .user_ctx = NULL };
-    httpd_uri_t uri_get_set = { .uri = "/api/settings", .method = HTTP_GET, .handler = get_settings_handler, .user_ctx = NULL };
-    httpd_uri_t uri_post_set = { .uri = "/api/settings", .method = HTTP_POST, .handler = post_settings_handler, .user_ctx = NULL };
-    httpd_uri_t uri_post_chat = { .uri = "/api/chat", .method = HTTP_POST, .handler = post_chat_handler, .user_ctx = NULL };
-    httpd_uri_t uri_ws = { .uri = "/ws", .method = HTTP_GET, .handler = ws_handler, .user_ctx = NULL, .is_websocket = true };
+    httpd_uri_t uri_get_inv = { .uri = "/api/inventory", .method = HTTP_GET, .handler = get_inventory_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_inv = { .uri = "/api/inventory", .method = HTTP_POST, .handler = post_inventory_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_hist = { .uri = "/api/history", .method = HTTP_GET, .handler = get_history_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_status = { .uri = "/api/status", .method = HTTP_GET, .handler = get_status_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_set = { .uri = "/api/settings", .method = HTTP_GET, .handler = get_settings_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_set = { .uri = "/api/settings", .method = HTTP_POST, .handler = post_settings_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_chat = { .uri = "/api/chat", .method = HTTP_POST, .handler = post_chat_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_recipes = { .uri = "/api/recipes/match", .method = HTTP_GET, .handler = get_recipes_match_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_recipes = { .uri = "/api/recipes", .method = HTTP_POST, .handler = post_recipes_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_ws = { .uri = "/ws", .method = HTTP_GET, .handler = ws_handler, .user_ctx = NULL, .is_websocket = true, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
 
     httpd_register_uri_handler(server, &uri_get_inv);
     httpd_register_uri_handler(server, &uri_post_inv);
@@ -274,6 +404,8 @@ void register_api_routes(httpd_handle_t server) {
     httpd_register_uri_handler(server, &uri_get_set);
     httpd_register_uri_handler(server, &uri_post_set);
     httpd_register_uri_handler(server, &uri_post_chat);
+    httpd_register_uri_handler(server, &uri_get_recipes);
+    httpd_register_uri_handler(server, &uri_post_recipes);
     httpd_register_uri_handler(server, &uri_ws);
 }
 

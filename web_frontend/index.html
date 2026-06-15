@@ -19,6 +19,8 @@
                 </div>
             </div>
             <div class="sys-dashboard">
+                <div class="sys-item" title="系统时间"><span class="icon">🕒</span><span id="sys-time">--:--</span></div>
+                <div class="sys-item" title="SD卡状态"><span class="icon">💽</span><span id="sys-sdcard">--</span></div>
                 <div class="sys-item" title="可用内存"><span class="icon">💾</span><span id="sys-heap">-- KB</span></div>
                 <div class="sys-item" title="WiFi信号"><span class="icon">📶</span><span id="sys-wifi">-- dBm</span></div>
             </div>
@@ -27,7 +29,7 @@
         <!-- 导航栏 -->
         <nav class="glass-nav">
             <button class="nav-btn active" data-target="view-inventory">库存</button>
-            <button class="nav-btn" data-target="view-history">记录</button>
+            <button class="nav-btn" data-target="view-recipes">食谱</button>
             <button class="nav-btn" data-target="view-chat">AI 助手</button>
             <button class="nav-btn" data-target="view-settings">设置</button>
         </nav>
@@ -51,10 +53,26 @@
                 <div id="category-container">
                     <!-- 分类区块由 JS 动态生成 -->
                 </div>
-                <!-- 悬浮添加按钮 -->
-                <button class="fab-btn" id="add-btn" aria-label="添加食材">
-                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                </button>
+                <!-- 悬浮按钮组 -->
+                <div class="fab-container">
+                    <button class="fab-btn secondary-fab" id="history-fab-btn" aria-label="查看记录" title="查看存取记录">
+                        <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </button>
+                    <button class="fab-btn" id="add-btn" aria-label="添加食材" title="添加食材">
+                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    </button>
+                </div>
+            </section>
+
+            <!-- 视图: 食谱 -->
+            <section id="view-recipes" class="view">
+                <div class="section-header">
+                    <h2>食谱推荐</h2>
+                    <button class="btn btn-primary" id="add-recipe-btn">新增食谱</button>
+                </div>
+                <div id="recipe-container">
+                    <!-- 食谱卡片由 JS 生成 -->
+                </div>
             </section>
 
             <!-- 视图: 记录 -->
@@ -195,6 +213,37 @@
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" id="edit-cancel-btn">取消</button>
                         <button type="submit" class="btn btn-primary">保存修改</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 食谱管理弹窗 -->
+        <div class="modal-overlay" id="recipe-modal">
+            <div class="modal glass-panel">
+                <h3 id="recipe-modal-title">新增食谱</h3>
+                <form id="recipe-form">
+                    <input type="hidden" id="recipe-old-name">
+                    <div class="input-group">
+                        <label for="recipe-name">菜名</label>
+                        <input type="text" id="recipe-name" required placeholder="例如：西红柿炒蛋">
+                    </div>
+                    <div class="input-group">
+                        <label for="recipe-category">分类</label>
+                        <input type="text" id="recipe-category" required placeholder="例如：家常菜">
+                    </div>
+                    <div class="input-group">
+                        <label for="recipe-brief">简要做法</label>
+                        <textarea id="recipe-brief" rows="3" required placeholder="输入简要做法..."></textarea>
+                    </div>
+                    <div class="input-group">
+                        <label>所需食材</label>
+                        <div id="recipe-ingredients-list"></div>
+                        <button type="button" class="btn btn-secondary btn-small" id="add-recipe-ing-btn" style="margin-top: 8px;">+ 添加食材要求</button>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" id="recipe-cancel-btn">取消</button>
+                        <button type="submit" class="btn btn-primary">保存食谱</button>
                     </div>
                 </form>
             </div>

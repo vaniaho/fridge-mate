@@ -301,6 +301,10 @@ std::vector<IngredientItem> get_all_ingredients() {
     return copy;
 }
 
+bool is_sd_card_available() {
+    return sd_card_available;
+}
+
 std::vector<IngredientItem> check_expiring_ingredients(int warning_days_threshold) {
     std::vector<IngredientItem> expiring_items;
     if (!is_initialized) return expiring_items;

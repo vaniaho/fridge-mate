@@ -64,6 +64,11 @@ namespace inventory {
     std::vector<IngredientItem> get_all_ingredients();
 
     /**
+     * @brief 获取 SD 卡是否可用
+     */
+    bool is_sd_card_available();
+
+    /**
      * @brief 检查即将过期（或已过期）的食材
      * @param warning_days_threshold 临期警告阈值（比如剩余 <= 3天）
      * @return 临期食材列表

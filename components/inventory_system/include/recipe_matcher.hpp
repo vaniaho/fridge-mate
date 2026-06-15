@@ -64,5 +64,20 @@ namespace inventory {
      */
     std::vector<Recipe> recipe_get_all();
 
+    /**
+     * @brief 新增食谱
+     */
+    bool recipe_add(const Recipe& recipe);
+
+    /**
+     * @brief 删除食谱
+     */
+    bool recipe_remove(const std::string& name);
+
+    /**
+     * @brief 更新食谱
+     */
+    bool recipe_update(const std::string& old_name, const Recipe& new_recipe);
+
 } // namespace inventory
 } // namespace smart_fridge

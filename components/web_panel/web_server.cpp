@@ -37,7 +37,7 @@ static const httpd_uri_t uri_app_js = { .uri = "/app.js", .method = HTTP_GET, .h
 
 extern "C" esp_err_t web_panel_start(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 16;
     config.stack_size = 16384; // Increase stack size to accommodate LLM HTTP client and JSON parsing
 
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);

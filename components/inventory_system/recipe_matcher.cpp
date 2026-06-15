@@ -372,5 +372,51 @@ std::vector<Recipe> recipe_get_all() {
     return copy;
 }
 
+bool recipe_add(const Recipe& recipe) {
+    if (!recipe_initialized) return false;
+    xSemaphoreTake(recipe_mutex, portMAX_DELAY);
+    // Check if exists
+    for (const auto& r : recipe_cache) {
+        if (r.name == recipe.name) {
+            xSemaphoreGive(recipe_mutex);
+            return false; // Already exists
+        }
+    }
+    recipe_cache.push_back(recipe);
+    bool res = recipe_save_to_disk();
+    xSemaphoreGive(recipe_mutex);
+    return res;
+}
+
+bool recipe_remove(const std::string& name) {
+    if (!recipe_initialized) return false;
+    xSemaphoreTake(recipe_mutex, portMAX_DELAY);
+    for (auto it = recipe_cache.begin(); it != recipe_cache.end(); ++it) {
+        if (it->name == name) {
+            recipe_cache.erase(it);
+            bool res = recipe_save_to_disk();
+            xSemaphoreGive(recipe_mutex);
+            return res;
+        }
+    }
+    xSemaphoreGive(recipe_mutex);
+    return false;
+}
+
+bool recipe_update(const std::string& old_name, const Recipe& new_recipe) {
+    if (!recipe_initialized) return false;
+    xSemaphoreTake(recipe_mutex, portMAX_DELAY);
+    for (auto& r : recipe_cache) {
+        if (r.name == old_name) {
+            r = new_recipe;
+            bool res = recipe_save_to_disk();
+            xSemaphoreGive(recipe_mutex);
+            return res;
+        }
+    }
+    xSemaphoreGive(recipe_mutex);
+    return false;
+}
+
 } // namespace inventory
 } // namespace smart_fridge
