@@ -15,6 +15,12 @@
 #include "rtc_time.h"
 #include "system_events.h"
 #include "gui_bridge.h"
+#include "system_manager.hpp"
+#include "gui_port.h"
+#include "gui_app.h"
+#include "esp_lvgl_port.h"
+#include "esp_vfs_fat.h"
+#include "vfs_fat_internal.h"
 
 // 声明 task_manager 暴露出来的初始化函数
 extern "C" void task_manager_init(void);
@@ -53,13 +59,15 @@ static void expiry_check_task(void *pvParameters) {
             time(&now);
 
             for (const auto &item : expiring) {
-                double remaining = difftime(item.expire_time, now) / (24.0 * 3600.0);
-                if (remaining < 0) {
-                    ESP_LOGE(TAG, "  [已过期] %s — 过期 %.0f 天",
-                             item.name.c_str(), -remaining);
-                } else {
-                    ESP_LOGW(TAG, "  [即将过期] %s — 剩余 %.1f 天",
-                             item.name.c_str(), remaining);
+                for (const auto &batch : item.batches) {
+                    double remaining = difftime(batch.expire_time, now) / (24.0 * 3600.0);
+                    if (remaining < 0) {
+                        ESP_LOGE(TAG, "  [已过期] %s (批次 %d) — 过期 %.0f 天",
+                                 item.name.c_str(), batch.batch_id, -remaining);
+                    } else {
+                        ESP_LOGW(TAG, "  [即将过期] %s (批次 %d) — 剩余 %.1f 天",
+                                 item.name.c_str(), batch.batch_id, remaining);
+                    }
                 }
             }
 
@@ -99,11 +107,16 @@ static void print_system_status(void) {
     for (const auto &item : items) {
         time_t now;
         time(&now);
-        double remaining = difftime(item.expire_time, now) / (24.0 * 3600.0);
-        const char *status = (remaining < 0) ? "已过期" :
+        double remaining = 9999.0;
+        // 取最早过期的批次计算剩余天数（batches 按存入时间排序，但最早存入 ≠ 最早过期）
+        for (const auto& batch : item.batches) {
+            double r = difftime(batch.expire_time, now) / (24.0 * 3600.0);
+            if (r < remaining) remaining = r;
+        }
+        const char *status = (item.batches.empty()) ? "正常" : (remaining < 0) ? "已过期" :
                              (remaining <= 3) ? "即将过期" : "正常";
-        ESP_LOGI(TAG, "    - %s: %d 个 (%s, 分类: %s, 剩余 %.0f 天)",
-                 item.name.c_str(), item.quantity, status,
+        ESP_LOGI(TAG, "    - %s: %d 个 (%s, 分类: %s, 最早剩余 %.0f 天)",
+                 item.name.c_str(), item.total_quantity, status,
                  item.category.c_str(), remaining);
     }
 
@@ -177,10 +190,24 @@ extern "C" void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(100)); // 等待总线任务启动就绪
 
     // --------------------------------------------------------
-    // Phase 2: 初始化本地食材数据库
-    //   包含 SD 卡驱动、库存数据、历史记录、食谱匹配
+    // Phase 2: 初始化内部存储与本地食材数据库
+    //   包含内部 Flash FATFS 挂载（用于字体资源）、SD 卡驱动、
+    //   库存数据、历史记录、食谱匹配。
     //   SD 卡失败时自动降级为纯内存模式
     // --------------------------------------------------------
+    ESP_LOGI(TAG, "[Phase 2] 挂载内部资源分区 (storage) ...");
+    esp_vfs_fat_mount_config_t mount_config = {};
+    mount_config.format_if_mount_failed = false;
+    mount_config.max_files = 10;
+    mount_config.allocation_unit_size = CONFIG_WL_SECTOR_SIZE;
+    wl_handle_t s_wl_handle;
+    esp_err_t err = esp_vfs_fat_spiflash_mount_rw_wl("/internal", "storage", &mount_config, &s_wl_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "  内部资源分区挂载失败 (%s)", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "  内部资源分区挂载成功 (/internal)");
+    }
+
     ESP_LOGI(TAG, "[Phase 2] 初始化食材数据库...");
     s_db_ok = smart_fridge::inventory::init_database();
     if (s_db_ok) {
@@ -198,13 +225,12 @@ extern "C" void app_main(void) {
     const char *wifi_ssid = credentials_get_wifi_ssid();
     const char *wifi_pass = credentials_get_wifi_pass();
 
+    ESP_LOGI(TAG, "[Phase 3] 初始化 WiFi 驱动...");
+    wifi_init_sta(wifi_ssid, wifi_pass);
+
     if (strlen(wifi_ssid) == 0) {
-        ESP_LOGW(TAG, "[Phase 3] WiFi 未配置，进入离线模式");
-        ESP_LOGW(TAG, "  请通过 'idf.py menuconfig' -> Smart Fridge Configuration 配置网络");
+        ESP_LOGW(TAG, "  WiFi 凭证未配置，保持离线模式，可进入设置界面进行扫描配置");
     } else {
-        ESP_LOGI(TAG, "[Phase 3] 连接 WiFi: %s ...", wifi_ssid);
-        // 注意：wifi_init_sta 是阻塞调用，连接成功后返回
-        wifi_init_sta(wifi_ssid, wifi_pass);
         s_network_ok = true;
         ESP_LOGI(TAG, "  WiFi 已连接");
 
@@ -234,11 +260,22 @@ extern "C" void app_main(void) {
     }
 
     // --------------------------------------------------------
-    // Phase 5: 初始化 GUI 桥接层
-    //   当前为 Stub 模式，待 LVGL/ESP-Brookesia 接入后生效
+    // Phase 5: 初始化 GUI
     // --------------------------------------------------------
-    ESP_LOGI(TAG, "[Phase 5] 初始化 GUI 桥接层 (Stub 模式)...");
+    ESP_LOGI(TAG, "[Phase 5] 初始化 GUI (LVGL & Display)...");
+    // Init GUI Port (Display + Touch + LVGL Task)
+    gui_port_init();
+
+    // Initialize SystemManager (NVS, Wi-Fi, Display, Settings)
+    // Must be called after gui_port_init so that BSP display is ready
+    smart_fridge::system::SystemManager::init();
+    lvgl_port_lock(0);
+    gui_app_init();
+    lvgl_port_unlock();
     gui_bridge_init();
+
+    // 更新 GUI 中的 WiFi 图标状态
+    gui_app_set_wifi_status(s_network_ok);
 
     // --------------------------------------------------------
     // Phase 6: 启动后台周期任务

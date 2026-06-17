@@ -1,0 +1,5 @@
+dependencies:
+  gui_port:
+    path: "../gui_port"
+  lvgl/lvgl: "^8.3.11"
+  espressif/freetype: "^2.13.0"

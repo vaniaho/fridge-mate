@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <algorithm>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -14,11 +15,12 @@ namespace smart_fridge {
 namespace inventory {
 
 // 内存中的食材列表缓存，避免频繁读写 SD 卡
-static std::vector<IngredientItem> inventory_cache;
+static std::vector<IngredientType> inventory_cache;
 static bool is_initialized = false;
 static bool sd_card_available = false; // SD 卡是否可用，不可用时回退到纯内存模式
 static SemaphoreHandle_t inventory_mutex = NULL; // 保护 inventory_cache 的多线程并发访问
 static int next_id = 0;  // 自增 ID 计数器，避免删除后 ID 碰撞
+static int next_batch_id = 0;
 
 /**
  * @brief 将当前缓存中的食材列表序列化为 JSON 并写入 SD 卡
@@ -35,10 +37,20 @@ static bool save_to_disk() {
         cJSON_AddNumberToObject(obj, "id", item.id);
         cJSON_AddStringToObject(obj, "name", item.name.c_str());
         cJSON_AddStringToObject(obj, "category", item.category.c_str());
-        cJSON_AddNumberToObject(obj, "quantity", item.quantity);
-        cJSON_AddNumberToObject(obj, "entry_time", item.entry_time);
-        cJSON_AddNumberToObject(obj, "expire_days", item.expire_days);
-        cJSON_AddNumberToObject(obj, "expire_time", item.expire_time);
+        cJSON_AddNumberToObject(obj, "total_quantity", item.total_quantity);
+
+        cJSON *batches_arr = cJSON_CreateArray();
+        for (const auto& batch : item.batches) {
+            cJSON *b_obj = cJSON_CreateObject();
+            cJSON_AddNumberToObject(b_obj, "batch_id", batch.batch_id);
+            cJSON_AddNumberToObject(b_obj, "quantity", batch.quantity);
+            cJSON_AddNumberToObject(b_obj, "entry_time", batch.entry_time);
+            cJSON_AddNumberToObject(b_obj, "expire_days", batch.expire_days);
+            cJSON_AddNumberToObject(b_obj, "expire_time", batch.expire_time);
+            cJSON_AddItemToArray(batches_arr, b_obj);
+        }
+        cJSON_AddItemToObject(obj, "batches", batches_arr);
+
         cJSON_AddItemToArray(root, obj);
     }
 
@@ -112,14 +124,39 @@ static bool load_from_disk() {
         cJSON *obj = cJSON_GetArrayItem(root, i);
         if (!obj) continue;
 
-        IngredientItem item;
+        IngredientType item;
         item.id = cJSON_GetObjectItem(obj, "id") ? cJSON_GetObjectItem(obj, "id")->valueint : i;
         item.name = cJSON_GetObjectItem(obj, "name") ? cJSON_GetObjectItem(obj, "name")->valuestring : "";
         item.category = cJSON_GetObjectItem(obj, "category") ? cJSON_GetObjectItem(obj, "category")->valuestring : "";
-        item.quantity = cJSON_GetObjectItem(obj, "quantity") ? cJSON_GetObjectItem(obj, "quantity")->valueint : 0;
-        item.entry_time = cJSON_GetObjectItem(obj, "entry_time") ? (time_t)cJSON_GetObjectItem(obj, "entry_time")->valuedouble : 0;
-        item.expire_days = cJSON_GetObjectItem(obj, "expire_days") ? cJSON_GetObjectItem(obj, "expire_days")->valueint : 0;
-        item.expire_time = cJSON_GetObjectItem(obj, "expire_time") ? (time_t)cJSON_GetObjectItem(obj, "expire_time")->valuedouble : 0;
+        item.total_quantity = cJSON_GetObjectItem(obj, "total_quantity") ? cJSON_GetObjectItem(obj, "total_quantity")->valueint : 0;
+        
+        cJSON *batches_arr = cJSON_GetObjectItem(obj, "batches");
+        if (batches_arr) {
+            int b_size = cJSON_GetArraySize(batches_arr);
+            for (int j = 0; j < b_size; j++) {
+                cJSON *b_obj = cJSON_GetArrayItem(batches_arr, j);
+                if (!b_obj) continue;
+                IngredientBatch b;
+                b.batch_id = cJSON_GetObjectItem(b_obj, "batch_id") ? cJSON_GetObjectItem(b_obj, "batch_id")->valueint : j;
+                b.quantity = cJSON_GetObjectItem(b_obj, "quantity") ? cJSON_GetObjectItem(b_obj, "quantity")->valueint : 0;
+                b.entry_time = cJSON_GetObjectItem(b_obj, "entry_time") ? (time_t)cJSON_GetObjectItem(b_obj, "entry_time")->valuedouble : 0;
+                b.expire_days = cJSON_GetObjectItem(b_obj, "expire_days") ? cJSON_GetObjectItem(b_obj, "expire_days")->valueint : 0;
+                b.expire_time = cJSON_GetObjectItem(b_obj, "expire_time") ? (time_t)cJSON_GetObjectItem(b_obj, "expire_time")->valuedouble : 0;
+                item.batches.push_back(b);
+            }
+        } else {
+            // 旧版数据兼容：尝试把旧的 quantity 等转化为第一个批次
+            if (cJSON_GetObjectItem(obj, "quantity")) {
+                IngredientBatch b;
+                b.batch_id = 0;
+                b.quantity = cJSON_GetObjectItem(obj, "quantity")->valueint;
+                b.entry_time = cJSON_GetObjectItem(obj, "entry_time") ? (time_t)cJSON_GetObjectItem(obj, "entry_time")->valuedouble : 0;
+                b.expire_days = cJSON_GetObjectItem(obj, "expire_days") ? cJSON_GetObjectItem(obj, "expire_days")->valueint : 0;
+                b.expire_time = cJSON_GetObjectItem(obj, "expire_time") ? (time_t)cJSON_GetObjectItem(obj, "expire_time")->valuedouble : 0;
+                item.batches.push_back(b);
+                item.total_quantity = b.quantity;
+            }
+        }
         
         inventory_cache.push_back(item);
     }
@@ -143,7 +180,6 @@ bool init_database() {
     if (sd_card_init() != 0) {
         ESP_LOGW(TAG, "SD Card initialization failed! Falling back to memory-only mode.");
         ESP_LOGW(TAG, "Inventory data will NOT be persisted across reboots.");
-        ESP_LOGW(TAG, "Please check: 1) SD card inserted? 2) Card contacts clean? 3) GPIO45 power?");
         sd_card_available = false;
     } else {
         sd_card_available = true;
@@ -156,10 +192,15 @@ bool init_database() {
     
     is_initialized = true;
 
-    // 计算下一个可用 ID（避免删除后 ID 碰撞）
+    // 计算下一个可用 ID 和 batch ID（避免删除后 ID 碰撞）
     for (const auto& item : inventory_cache) {
         if (item.id >= next_id) {
             next_id = item.id + 1;
+        }
+        for (const auto& b : item.batches) {
+            if (b.batch_id >= next_batch_id) {
+                next_batch_id = b.batch_id + 1;
+            }
         }
     }
 
@@ -187,35 +228,35 @@ bool add_ingredient(const std::string& name, const std::string& category, int qu
     time_t now;
     time(&now);
 
+    IngredientBatch new_batch;
+    new_batch.batch_id = next_batch_id++;
+    new_batch.quantity = quantity;
+    new_batch.entry_time = now;
+    new_batch.expire_days = expire_days;
+    new_batch.expire_time = now + (expire_days * 24 * 3600);
+
+    bool found = false;
     // 检查缓存中是否已存在同名食材
     for (auto& item : inventory_cache) {
         if (item.name == name) {
-            item.quantity += quantity;
-            // 覆盖原有存入时间和过期时间（默认新老食材合并，按最新保质期算）
-            item.entry_time = now;
-            item.expire_days = expire_days;
-            item.expire_time = now + (expire_days * 24 * 3600);
-            ESP_LOGI(TAG, "Updated existing ingredient: %s, new qty: %d", name.c_str(), item.quantity);
-            history_append(HistoryAction::ADD, name, quantity);
-            bool result = save_to_disk();
-            xSemaphoreGive(inventory_mutex);
-            return result;
+            item.batches.push_back(new_batch);
+            item.total_quantity += quantity;
+            found = true;
+            break;
         }
     }
 
-    // 缓存中不存在，创建新记录
-    IngredientItem new_item;
-    new_item.id = next_id++;  // 使用自增计数器，避免删除后 ID 碰撞
-    new_item.name = name;
-    new_item.category = category;
-    new_item.quantity = quantity;
-    new_item.entry_time = now;
-    new_item.expire_days = expire_days;
-    // 计算绝对过期时间戳
-    new_item.expire_time = now + (expire_days * 24 * 3600);
+    if (!found) {
+        IngredientType new_item;
+        new_item.id = next_id++;
+        new_item.name = name;
+        new_item.category = category;
+        new_item.total_quantity = quantity;
+        new_item.batches.push_back(new_batch);
+        inventory_cache.push_back(new_item);
+    }
 
-    inventory_cache.push_back(new_item);
-    ESP_LOGI(TAG, "Added new ingredient: %s (Qty: %d)", name.c_str(), quantity);
+    ESP_LOGI(TAG, "Added new ingredient batch: %s (Qty: %d)", name.c_str(), quantity);
     history_append(HistoryAction::ADD, name, quantity);
     
     bool result = save_to_disk();
@@ -224,24 +265,39 @@ bool add_ingredient(const std::string& name, const std::string& category, int qu
 }
 
 bool remove_ingredient(const std::string& name, int quantity) {
-    if (!is_initialized) return false;
+    if (!is_initialized || quantity <= 0) return false;
 
     xSemaphoreTake(inventory_mutex, portMAX_DELAY);
 
     for (auto it = inventory_cache.begin(); it != inventory_cache.end(); ++it) {
         if (it->name == name) {
-            int actual_removed = quantity;
-            if (it->quantity > quantity) {
-                // 如果只取出一部分
-                it->quantity -= quantity;
-                ESP_LOGI(TAG, "Decreased %s quantity to %d", name.c_str(), it->quantity);
-            } else {
-                // 如果取出的数量大于等于库存，直接删除该食材记录
-                actual_removed = it->quantity; // 实际取出量 = 库存量
-                ESP_LOGI(TAG, "Removed %s from inventory completely", name.c_str());
-                inventory_cache.erase(it);
+            int remaining_to_remove = quantity;
+            int actual_removed = 0;
+            
+            // 按照存入时间扣减（假设 batches 已经是按照加入顺序排列的，即 entry_time 升序）
+            auto batch_it = it->batches.begin();
+            while (batch_it != it->batches.end() && remaining_to_remove > 0) {
+                if (batch_it->quantity <= remaining_to_remove) {
+                    remaining_to_remove -= batch_it->quantity;
+                    actual_removed += batch_it->quantity;
+                    batch_it = it->batches.erase(batch_it);
+                } else {
+                    batch_it->quantity -= remaining_to_remove;
+                    actual_removed += remaining_to_remove;
+                    remaining_to_remove = 0;
+                    ++batch_it;
+                }
             }
+            
+            it->total_quantity -= actual_removed;
+            ESP_LOGI(TAG, "Removed %s quantity %d, remaining total: %d", name.c_str(), actual_removed, it->total_quantity);
             history_append(HistoryAction::REMOVE, name, actual_removed);
+            
+            if (it->total_quantity <= 0 || it->batches.empty()) {
+                inventory_cache.erase(it);
+                ESP_LOGI(TAG, "Removed %s from inventory completely", name.c_str());
+            }
+            
             bool result = save_to_disk();
             xSemaphoreGive(inventory_mutex);
             return result;
@@ -253,47 +309,53 @@ bool remove_ingredient(const std::string& name, int quantity) {
     return false;
 }
 
-bool update_ingredient(const std::string& name, int new_quantity, const std::string& new_category, int new_expire_days, time_t new_entry_time) {
+bool clear_ingredient(const std::string& name) {
     if (!is_initialized) return false;
-    
-    // 如果数量 <= 0，等同于全部取出
-    if (new_quantity <= 0) {
-        return remove_ingredient(name, 999999);
-    }
+    xSemaphoreTake(inventory_mutex, portMAX_DELAY);
 
+    for (auto it = inventory_cache.begin(); it != inventory_cache.end(); ++it) {
+        if (it->name == name) {
+            history_append(HistoryAction::REMOVE, name, it->total_quantity);
+            inventory_cache.erase(it);
+            bool result = save_to_disk();
+            xSemaphoreGive(inventory_mutex);
+            return result;
+        }
+    }
+    xSemaphoreGive(inventory_mutex);
+    return false;
+}
+
+bool update_ingredient(const std::string& name, int quantity, const std::string& category, int expire_days, time_t entry_time) {
+    if (!is_initialized) return false;
     xSemaphoreTake(inventory_mutex, portMAX_DELAY);
 
     for (auto& item : inventory_cache) {
         if (item.name == name) {
-            // 计算数量变化，补充历史记录
-            if (new_quantity > item.quantity) {
-                history_append(HistoryAction::ADD, name, new_quantity - item.quantity);
-            } else if (new_quantity < item.quantity) {
-                history_append(HistoryAction::REMOVE, name, item.quantity - new_quantity);
-            }
+            item.category = category;
+            item.total_quantity = quantity;
+            item.batches.clear();
             
-            item.quantity = new_quantity;
-            if (!new_category.empty()) {
-                item.category = new_category;
-            }
-            item.expire_days = new_expire_days;
-            item.entry_time = new_entry_time;
-            item.expire_time = new_entry_time + (new_expire_days * 24 * 3600);
+            IngredientBatch new_batch;
+            new_batch.batch_id = next_batch_id++;
+            new_batch.quantity = quantity;
+            new_batch.entry_time = entry_time;
+            new_batch.expire_days = expire_days;
+            new_batch.expire_time = entry_time + (expire_days * 24 * 3600);
             
-            ESP_LOGI(TAG, "Updated %s info: qty=%d, cat=%s, expire_days=%d", name.c_str(), new_quantity, item.category.c_str(), new_expire_days);
+            item.batches.push_back(new_batch);
             
             bool result = save_to_disk();
             xSemaphoreGive(inventory_mutex);
             return result;
         }
     }
-
+    
     xSemaphoreGive(inventory_mutex);
-    ESP_LOGW(TAG, "Update failed: Ingredient '%s' not found.", name.c_str());
     return false;
 }
 
-std::vector<IngredientItem> get_all_ingredients() {
+std::vector<IngredientType> get_all_ingredients() {
     // 允许在 init 之前调用（返回空列表），故需判断 mutex 是否已创建
     if (inventory_mutex) xSemaphoreTake(inventory_mutex, portMAX_DELAY);
     auto copy = inventory_cache;
@@ -305,31 +367,30 @@ bool is_sd_card_available() {
     return sd_card_available;
 }
 
-std::vector<IngredientItem> check_expiring_ingredients(int warning_days_threshold) {
-    std::vector<IngredientItem> expiring_items;
-    if (!is_initialized) return expiring_items;
+std::vector<IngredientType> check_expiring_ingredients(int warning_days_threshold) {
+    std::vector<IngredientType> expiring_items;
+    if (!inventory_mutex) return expiring_items;
 
     xSemaphoreTake(inventory_mutex, portMAX_DELAY);
-
     time_t now;
     time(&now);
-    
-    // 将阈值天数转换为秒
-    double warning_seconds = warning_days_threshold * 24 * 3600.0;
 
     for (const auto& item : inventory_cache) {
-        double seconds_left = difftime(item.expire_time, now);
+        IngredientType expiring_item = item;
+        expiring_item.batches.clear();
+        expiring_item.total_quantity = 0;
         
-        // 如果剩余时间小于警告阈值（包含已经过期的负数）
-        if (seconds_left <= warning_seconds) {
-            expiring_items.push_back(item);
-            
-            if (seconds_left < 0) {
-                ESP_LOGW(TAG, "[EXPIRED] %s has expired!", item.name.c_str());
-            } else {
-                ESP_LOGW(TAG, "[EXPIRING] %s expires in %.1f days", 
-                         item.name.c_str(), seconds_left / (24.0 * 3600.0));
+        for (const auto& batch : item.batches) {
+            double diff_seconds = difftime(batch.expire_time, now);
+            int remaining_days = (int)(diff_seconds / (24 * 3600));
+            if (remaining_days <= warning_days_threshold) {
+                expiring_item.batches.push_back(batch);
+                expiring_item.total_quantity += batch.quantity;
             }
+        }
+        
+        if (!expiring_item.batches.empty()) {
+            expiring_items.push_back(expiring_item);
         }
     }
     

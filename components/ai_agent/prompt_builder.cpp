@@ -23,7 +23,7 @@ std::string build_llm_request(const std::string& user_voice_text) {
     } else {
         inventory_context << "当前冰箱库存有: ";
         for (const auto& item : inventory) {
-            inventory_context << item.name << "(" << item.quantity << "), ";
+            inventory_context << item.name << "(" << item.total_quantity << "), ";
         }
     }
 
@@ -78,7 +78,7 @@ std::string build_llm_request(const std::string& user_voice_text) {
 {
     "action": "ADD" | "REMOVE" | "RECIPE" | "CHAT",
     "target_item": "食材名称(如苹果, 仅在ADD/REMOVE时需要)",
-    "category": "食材分类(如水果/蕴菜/肉禽/海鲜/蛋奶/豆制品/主食/调味品/饮品/零食/冻品, 仅在ADD时需要)",
+    "category": "食材分类(如水果/蔬菜/肉禽/海鲜/蛋奶/豆制品/主食/调味品/饮品/零食/冻品, 仅在ADD时需要)",
     "expire_days": 保质期天数(整数, 仅在ADD时需要, 根据食材类型合理估算),
     "quantity": 数量(整数, 仅在ADD/REMOVE时需要),
     "tts_reply": "你应该回答给用户的语音播报内容"

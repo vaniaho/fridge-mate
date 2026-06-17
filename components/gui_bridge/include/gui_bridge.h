@@ -6,27 +6,41 @@
 extern "C" {
 #endif
 
+// 定义应用页面 ID
+typedef enum {
+    GUI_APP_LAUNCHER,
+    GUI_APP_INVENTORY,
+    GUI_APP_RECIPES,
+    GUI_APP_SETTINGS,
+    GUI_APP_VOICE_ASSIST,
+    GUI_APP_SHOPPING
+} gui_app_id_t;
+
 /**
  * @brief Initialize the GUI bridge layer
- * Should be called after the GUI framework is initialized.
- * Currently a stub - will connect to LVGL/ESP-Brookesia once decided.
  */
 void gui_bridge_init(void);
 
 // ======== Screen Control ========
 
-/** @brief Turn on the display (e.g., after PIR detection) */
-void gui_bridge_screen_on(void);
+/** @brief Turn on the display / Wake up */
+void gui_bridge_wake(void);
 
-/** @brief Turn off the display (e.g., entering sleep mode) */
-void gui_bridge_screen_off(void);
+/** @brief Turn off the display / Enter standby */
+void gui_bridge_show_standby(void);
 
-// ======== Inventory Display ========
+// ======== Navigation ========
+
+/** @brief Navigate to a specific application */
+void gui_bridge_navigate_to(gui_app_id_t app_id);
+
+/** @brief Go back to previous screen */
+void gui_bridge_go_back(void);
+
+// ======== Modals & Overlays ========
 
 /** @brief Request GUI to refresh the ingredient list view */
 void gui_bridge_refresh_inventory(void);
-
-// ======== Status & Notifications ========
 
 /** @brief Show a notification popup on the screen */
 void gui_bridge_show_notification(const char* title, const char* message);
@@ -37,10 +51,11 @@ void gui_bridge_show_listening_indicator(bool is_listening);
 /** @brief Display TTS text on screen while being spoken */
 void gui_bridge_show_tts_text(const char* text);
 
-// ======== Navigation ========
+/** @brief Show Camera Preview modal */
+void gui_bridge_show_camera_preview(void);
 
-/** @brief Navigate to the settings page */
-void gui_bridge_open_settings(void);
+/** @brief Show Full-screen Voice Assistant */
+void gui_bridge_show_voice_assist(void);
 
 #ifdef __cplusplus
 }

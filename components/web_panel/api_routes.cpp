@@ -22,9 +22,26 @@ static esp_err_t get_inventory_handler(httpd_req_t *req) {
         cJSON_AddNumberToObject(obj, "id", item.id);
         cJSON_AddStringToObject(obj, "name", item.name.c_str());
         cJSON_AddStringToObject(obj, "category", item.category.c_str());
-        cJSON_AddNumberToObject(obj, "quantity", item.quantity);
-        cJSON_AddNumberToObject(obj, "expire_days", item.expire_days);
-        cJSON_AddNumberToObject(obj, "entry_time", item.entry_time);
+        cJSON_AddNumberToObject(obj, "quantity", item.total_quantity);
+        if (!item.batches.empty()) {
+            cJSON_AddNumberToObject(obj, "expire_days", item.batches.front().expire_days);
+            cJSON_AddNumberToObject(obj, "entry_time", item.batches.front().entry_time);
+        } else {
+            cJSON_AddNumberToObject(obj, "expire_days", 0);
+            cJSON_AddNumberToObject(obj, "entry_time", 0);
+        }
+        
+        cJSON *batches_arr = cJSON_CreateArray();
+        for (const auto& batch : item.batches) {
+            cJSON *b_obj = cJSON_CreateObject();
+            cJSON_AddNumberToObject(b_obj, "batch_id", batch.batch_id);
+            cJSON_AddNumberToObject(b_obj, "quantity", batch.quantity);
+            cJSON_AddNumberToObject(b_obj, "entry_time", batch.entry_time);
+            cJSON_AddNumberToObject(b_obj, "expire_days", batch.expire_days);
+            cJSON_AddNumberToObject(b_obj, "expire_time", batch.expire_time);
+            cJSON_AddItemToArray(batches_arr, b_obj);
+        }
+        cJSON_AddItemToObject(obj, "batches", batches_arr);
         cJSON_AddItemToArray(root, obj);
     }
     const char *sys_info = cJSON_PrintUnformatted(root);

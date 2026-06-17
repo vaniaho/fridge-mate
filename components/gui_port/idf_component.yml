@@ -1,0 +1,4 @@
+dependencies:
+  lvgl/lvgl: "^8.3.11"
+  waveshare/esp32_p4_wifi6_touch_lcd_7b: "^1.0.0"
+  espressif/esp_lvgl_port: "^2.0.0"

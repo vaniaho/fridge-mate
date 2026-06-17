@@ -35,7 +35,7 @@ static void system_bus_task(void *pvParameters) {
 
                 case EVT_WAKE_WORD_DETECTED:
                     ESP_LOGI(TAG, "[Event] Wake word detected!");
-                    gui_bridge_screen_on();
+                    gui_bridge_wake();
                     gui_bridge_show_listening_indicator(true);
                     break;
 
@@ -112,12 +112,12 @@ static void system_bus_task(void *pvParameters) {
 
                 case EVT_PIR_TRIGGERED:
                     ESP_LOGI(TAG, "[Event] PIR sensor triggered.");
-                    gui_bridge_screen_on();
+                    gui_bridge_wake();
                     break;
 
                 case EVT_GOTO_SLEEP:
                     ESP_LOGI(TAG, "[Event] Idle timeout reached. Going to sleep.");
-                    gui_bridge_screen_off();
+                    gui_bridge_show_standby();
                     break;
 
                 default:

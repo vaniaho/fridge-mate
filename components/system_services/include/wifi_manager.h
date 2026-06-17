@@ -11,6 +11,7 @@ extern "C" {
  * @param pass WiFi password
  */
 void wifi_init_sta(const char* ssid, const char* pass);
+void wifi_manager_disable_retry(void);
 
 #ifdef __cplusplus
 }

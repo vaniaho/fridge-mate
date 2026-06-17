@@ -111,11 +111,9 @@ int sd_card_init(void) {
     sdmmc_card_print_info(stdout, card);
 
     // 写入测试：确认文件系统可写，尽早发现只读/写保护问题
-    const char *test_path = "/sdcard/.write_test";
-    FILE *f = fopen(test_path, "w");
-    if (f == NULL) {
-        ESP_LOGE(TAG, "Write test FAILED: fopen(%s) errno=%d (%s)",
-                 test_path, errno, strerror(errno));
+    FILE* f = fopen("/sdcard/writetst.txt", "w");
+    if (!f) {
+        ESP_LOGE(TAG, "Write test FAILED: fopen(/sdcard/writetst.txt) errno=%d (%s)", errno, strerror(errno));
         ESP_LOGE(TAG, "Possible causes:");
         ESP_LOGE(TAG, "  1. SD card write-protect tab is ON (physical slider on card)");
         ESP_LOGE(TAG, "  2. Filesystem mounted as read-only");
@@ -123,7 +121,7 @@ int sd_card_init(void) {
         return -1;
     }
     fclose(f);
-    remove(test_path);
+    remove("/sdcard/writetst.txt");
     ESP_LOGI(TAG, "Write test passed. SD card is writable.");
 
     return 0;

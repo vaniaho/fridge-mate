@@ -270,7 +270,7 @@ static bool recipe_load_from_disk() {
  * 遍历食谱所需食材，检查库存中是否存在同名且数量充足的食材
  */
 static RecipeMatch match_single_recipe(const Recipe& recipe,
-                                       const std::vector<IngredientItem>& inventory) {
+                                       const std::vector<IngredientType>& inventory) {
     RecipeMatch match;
     match.recipe = recipe;
     match.missing_count = 0;
@@ -282,7 +282,8 @@ static RecipeMatch match_single_recipe(const Recipe& recipe,
         bool found = false;
         for (const auto& inv_item : inventory) {
             // 精确匹配食材名称
-            if (inv_item.name == req.name && inv_item.quantity >= req.min_quantity) {
+            if (inv_item.name == req.name &&
+                inv_item.total_quantity >= req.min_quantity) {
                 found = true;
                 break;
             }
