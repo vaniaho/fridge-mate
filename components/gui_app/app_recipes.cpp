@@ -3,6 +3,9 @@
 #include "gui_styles.h"
 #include "recipe_matcher.hpp"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <algorithm>
 
 static lv_obj_t * content_area;
 // 记录当前食谱页的筛选模式，供外部刷新调用复用
@@ -16,8 +19,145 @@ static void nav_inventory_cb(lv_event_t * e) {
     gui_app_navigate_to(GUI_APP_INVENTORY);
 }
 
+static void btn_close_popup_cb(lv_event_t * e) {
+    lv_obj_t * popup_bg = (lv_obj_t *)lv_event_get_user_data(e);
+    if (popup_bg) {
+        lv_obj_del(popup_bg);
+    }
+}
+
+static void create_recipe_detail_popup(const std::string& name) {
+    // 查找该食谱并获取匹配状态
+    auto matches = smart_fridge::inventory::recipe_match_near(99);
+    const smart_fridge::inventory::RecipeMatch* p_match = nullptr;
+    for (const auto& m : matches) {
+        if (m.recipe.name == name) {
+            p_match = &m;
+            break;
+        }
+    }
+    if (!p_match) return;
+
+    lv_obj_t * screen = lv_scr_act();
+
+    // 背景半透明遮罩
+    lv_obj_t * popup_bg = lv_obj_create(screen);
+    lv_obj_set_size(popup_bg, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(popup_bg, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(popup_bg, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(popup_bg, 0, 0);
+    lv_obj_set_style_radius(popup_bg, 0, 0);
+    lv_obj_add_event_cb(popup_bg, [](lv_event_t* e){ /* 阻止穿透 */ }, LV_EVENT_ALL, NULL);
+
+    // 弹窗主体
+    lv_obj_t * popup = lv_obj_create(popup_bg);
+    lv_obj_set_size(popup, 540, 440);
+    lv_obj_center(popup);
+    lv_obj_set_style_bg_color(popup, lv_color_white(), 0);
+    lv_obj_set_style_radius(popup, 16, 0);
+    lv_obj_set_style_shadow_width(popup, 20, 0);
+    lv_obj_set_style_shadow_opa(popup, LV_OPA_30, 0);
+    lv_obj_clear_flag(popup, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 标题
+    lv_obj_t * title = lv_label_create(popup);
+    lv_label_set_text(title, p_match->recipe.name.c_str());
+    lv_obj_set_style_text_font(title, font_cn_24, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 20, 20);
+
+    // 分类标签
+    lv_obj_t * cat_tag = lv_label_create(popup);
+    lv_label_set_text(cat_tag, p_match->recipe.category.c_str());
+    lv_obj_set_style_bg_color(cat_tag, COLOR_PRIMARY, 0);
+    lv_obj_set_style_text_color(cat_tag, lv_color_white(), 0);
+    lv_obj_set_style_radius(cat_tag, 8, 0);
+    lv_obj_set_style_pad_all(cat_tag, 4, 0);
+    lv_obj_set_style_text_font(cat_tag, font_cn_16, 0);
+    lv_obj_align_to(cat_tag, title, LV_ALIGN_OUT_RIGHT_MID, 15, 0);
+
+    // 关闭按钮
+    lv_obj_t * close_btn = lv_btn_create(popup);
+    lv_obj_set_size(close_btn, 40, 40);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -10, 10);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_t * close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_font(close_lbl, &lv_font_montserrat_18, 0);
+    lv_obj_center(close_lbl);
+    lv_obj_add_event_cb(close_btn, btn_close_popup_cb, LV_EVENT_CLICKED, popup_bg);
+
+    // 标题：所需食材
+    lv_obj_t * ing_title = lv_label_create(popup);
+    lv_label_set_text(ing_title, "所需食材：");
+    lv_obj_set_style_text_font(ing_title, font_cn_18, 0);
+    lv_obj_align(ing_title, LV_ALIGN_TOP_LEFT, 20, 70);
+
+    // 食材列表区域 (可滚动)
+    lv_obj_t * ing_list = lv_obj_create(popup);
+    lv_obj_set_size(ing_list, 480, 120);
+    lv_obj_align(ing_list, LV_ALIGN_TOP_LEFT, 20, 100);
+    lv_obj_set_flex_flow(ing_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_border_width(ing_list, 1, 0);
+    lv_obj_set_style_border_color(ing_list, lv_color_hex(0xDDDDDD), 0);
+
+    for (const auto& ing : p_match->recipe.ingredients) {
+        lv_obj_t * row = lv_obj_create(ing_list);
+        lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_pad_all(row, 5, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        bool is_missing = (std::find(p_match->missing_items.begin(), p_match->missing_items.end(), ing.name) != p_match->missing_items.end());
+
+        lv_obj_t * lbl = lv_label_create(row);
+        lv_label_set_text_fmt(lbl, "• %s (需 %d)", ing.name.c_str(), ing.min_quantity);
+        lv_obj_set_style_text_font(lbl, font_cn_18, 0);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_t * status = lv_label_create(row);
+        if (is_missing) {
+            lv_label_set_text(status, "缺少");
+            lv_obj_set_style_text_color(status, COLOR_DANGER, 0);
+        } else {
+            lv_label_set_text(status, "已备齐");
+            lv_obj_set_style_text_color(status, COLOR_SUCCESS, 0);
+        }
+        lv_obj_set_style_text_font(status, font_cn_18, 0);
+        lv_obj_align(status, LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+
+    // 标题：做法说明
+    lv_obj_t * brief_title = lv_label_create(popup);
+    lv_label_set_text(brief_title, "做法说明：");
+    lv_obj_set_style_text_font(brief_title, font_cn_18, 0);
+    lv_obj_align(brief_title, LV_ALIGN_TOP_LEFT, 20, 240);
+
+    // 做法内容 (可滚动文本区)
+    lv_obj_t * brief_box = lv_obj_create(popup);
+    lv_obj_set_size(brief_box, 480, 120);
+    lv_obj_align(brief_box, LV_ALIGN_TOP_LEFT, 20, 270);
+    lv_obj_set_style_bg_color(brief_box, lv_color_hex(0xF9F9F9), 0);
+    lv_obj_set_style_border_width(brief_box, 0, 0);
+    
+    lv_obj_t * brief_text = lv_label_create(brief_box);
+    lv_label_set_long_mode(brief_text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(brief_text, 440);
+    lv_label_set_text(brief_text, p_match->recipe.brief.c_str());
+    lv_obj_set_style_text_font(brief_text, font_cn_18, 0);
+    lv_obj_set_style_text_color(brief_text, lv_color_hex(0x555555), 0);
+}
+
 static void card_click_cb(lv_event_t * e) {
-    // Add interaction logic here if needed later
+    lv_event_code_t code = lv_event_get_code(e);
+    char * name = (char*)lv_event_get_user_data(e);
+    if (!name) return;
+
+    if (code == LV_EVENT_CLICKED) {
+        create_recipe_detail_popup(name);
+    } else if (code == LV_EVENT_DELETE) {
+        free(name);
+    }
 }
 
 static void render_recipe_items(int filter_mode) {
@@ -33,7 +173,7 @@ static void render_recipe_items(int filter_mode) {
         lv_obj_t * card = lv_obj_create(content_area);
         lv_obj_set_size(card, 240, 160);
         lv_obj_add_style(card, &style_card, 0);
-        lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_ALL, strdup(match.recipe.name.c_str()));
 
         // Title
         lv_obj_t * title = lv_label_create(card);

@@ -239,7 +239,20 @@ bool add_ingredient(const std::string& name, const std::string& category, int qu
     // 检查缓存中是否已存在同名食材
     for (auto& item : inventory_cache) {
         if (item.name == name) {
-            item.batches.push_back(new_batch);
+            bool merged = false;
+            for (auto& b : item.batches) {
+                struct tm tm_b, tm_n;
+                localtime_r(&b.entry_time, &tm_b);
+                localtime_r(&now, &tm_n);
+                if (tm_b.tm_year == tm_n.tm_year && tm_b.tm_yday == tm_n.tm_yday) {
+                    b.quantity += quantity;
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) {
+                item.batches.push_back(new_batch);
+            }
             item.total_quantity += quantity;
             found = true;
             break;

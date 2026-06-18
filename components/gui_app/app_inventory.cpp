@@ -4,6 +4,8 @@
 #include "inventory.hpp"
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static lv_obj_t * content_area;
 // 记录当前库存页的筛选模式，供外部刷新调用复用
@@ -17,8 +19,202 @@ static void nav_recipes_cb(lv_event_t * e) {
     gui_app_navigate_to(GUI_APP_RECIPES);
 }
 
+static void btn_add_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    char * name = (char*)lv_event_get_user_data(e);
+    if (!name) return;
+
+    if (code == LV_EVENT_CLICKED) {
+        auto items = smart_fridge::inventory::get_all_ingredients();
+        for (auto& it : items) {
+            if (it.name == name) {
+                // 默认增加 1 个单位，保质期按 7 天算（可后续优化）
+                smart_fridge::inventory::add_ingredient(name, it.category, 1, 7);
+                app_inventory_refresh();
+                break;
+            }
+        }
+    } else if (code == LV_EVENT_DELETE) {
+        free(name);
+    }
+}
+
+static void btn_sub_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    char * name = (char*)lv_event_get_user_data(e);
+    if (!name) return;
+
+    if (code == LV_EVENT_CLICKED) {
+        smart_fridge::inventory::remove_ingredient(name, 1);
+        app_inventory_refresh();
+    } else if (code == LV_EVENT_DELETE) {
+        free(name);
+    }
+}
+
+static void btn_close_popup_cb(lv_event_t * e) {
+    lv_obj_t * popup_bg = (lv_obj_t *)lv_event_get_user_data(e);
+    if (popup_bg) {
+        lv_obj_del(popup_bg);
+    }
+}
+
+static void btn_take_all_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    // user_data is an array or struct? Let's use lv_obj_get_user_data if available, or just pass a struct.
+    // Better yet, pass the name string, and find the popup by traversing parent.
+    // Wait, LVGL event user_data is per cb. 
+    char * name = (char*)lv_event_get_user_data(e);
+    if (!name) return;
+
+    if (code == LV_EVENT_CLICKED) {
+        smart_fridge::inventory::clear_ingredient(name);
+        app_inventory_refresh();
+        // find popup bg and delete it
+        lv_obj_t * btn = lv_event_get_target(e);
+        lv_obj_t * popup = lv_obj_get_parent(lv_obj_get_parent(btn)); // btn -> btn_matrix/container -> popup -> popup_bg
+        // We can just rely on app_inventory_refresh to redraw, but the popup might still be there.
+        // Actually, just delete the top level screen child that has the popup.
+        // To be safe, we can trigger btn_close_popup_cb or just close all popups.
+        lv_obj_t * screen = lv_scr_act();
+        lv_obj_t * popup_bg = lv_obj_get_child(screen, lv_obj_get_child_cnt(screen) - 1); // rough guess
+        if (popup_bg) lv_obj_del(popup_bg); // A bit hacky, let's improve it below
+    } else if (code == LV_EVENT_DELETE) {
+        free(name);
+    }
+}
+
+// 提取的详情弹窗逻辑
+static void create_ingredient_detail_popup(const std::string& name) {
+    auto items = smart_fridge::inventory::get_all_ingredients();
+    smart_fridge::inventory::IngredientType* p_item = nullptr;
+    for (auto& it : items) {
+        if (it.name == name) {
+            p_item = &it;
+            break;
+        }
+    }
+    if (!p_item) return;
+
+    lv_obj_t * screen = lv_scr_act();
+
+    // 背景半透明遮罩
+    lv_obj_t * popup_bg = lv_obj_create(screen);
+    lv_obj_set_size(popup_bg, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(popup_bg, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(popup_bg, LV_OPA_50, 0);
+    lv_obj_set_style_border_width(popup_bg, 0, 0);
+    lv_obj_set_style_radius(popup_bg, 0, 0);
+    lv_obj_add_event_cb(popup_bg, [](lv_event_t* e){ /* 阻止事件穿透 */ }, LV_EVENT_ALL, NULL);
+
+    // 弹窗主体容器
+    lv_obj_t * popup = lv_obj_create(popup_bg);
+    lv_obj_set_size(popup, 500, 400);
+    lv_obj_center(popup);
+    lv_obj_set_style_bg_color(popup, lv_color_white(), 0);
+    lv_obj_set_style_radius(popup, 16, 0);
+    lv_obj_set_style_shadow_width(popup, 20, 0);
+    lv_obj_set_style_shadow_opa(popup, LV_OPA_30, 0);
+
+    // 标题
+    lv_obj_t * title = lv_label_create(popup);
+    lv_label_set_text_fmt(title, "%s 详情", p_item->name.c_str());
+    lv_obj_set_style_text_font(title, font_cn_24, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 20, 20);
+
+    // 关闭按钮
+    lv_obj_t * close_btn = lv_btn_create(popup);
+    lv_obj_set_size(close_btn, 40, 40);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -10, 10);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_t * close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_font(close_lbl, &lv_font_montserrat_18, 0);
+    lv_obj_center(close_lbl);
+    lv_obj_add_event_cb(close_btn, btn_close_popup_cb, LV_EVENT_CLICKED, popup_bg);
+
+    // 信息文本
+    lv_obj_t * info = lv_label_create(popup);
+    lv_label_set_text_fmt(info, "分类: %s\n总数量: %d", p_item->category.c_str(), p_item->total_quantity);
+    lv_obj_set_style_text_font(info, font_cn_18, 0);
+    lv_obj_align(info, LV_ALIGN_TOP_LEFT, 20, 70);
+
+    // 批次列表（可滚动）
+    lv_obj_t * batch_list = lv_obj_create(popup);
+    lv_obj_set_size(batch_list, 460, 200);
+    lv_obj_align(batch_list, LV_ALIGN_TOP_MID, 0, 120);
+    lv_obj_set_flex_flow(batch_list, LV_FLEX_FLOW_COLUMN);
+    
+    time_t now;
+    time(&now);
+
+    for (const auto& batch : p_item->batches) {
+        lv_obj_t * item = lv_obj_create(batch_list);
+        lv_obj_set_size(item, LV_PCT(100), 50);
+        lv_obj_set_style_border_width(item, 1, 0);
+        lv_obj_set_style_border_color(item, lv_color_hex(0xEEEEEE), 0);
+        lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+        
+        lv_obj_t * batch_lbl = lv_label_create(item);
+        double remaining = difftime(batch.expire_time, now) / (24.0 * 3600.0);
+        lv_label_set_text_fmt(batch_lbl, "数量: %d | 剩余: %d 天", batch.quantity, (int)remaining);
+        lv_obj_set_style_text_font(batch_lbl, font_cn_16, 0);
+        lv_obj_align(batch_lbl, LV_ALIGN_LEFT_MID, 10, 0);
+
+        if (remaining < 0) lv_obj_set_style_text_color(batch_lbl, COLOR_DANGER, 0);
+        else if (remaining <= 3.0) lv_obj_set_style_text_color(batch_lbl, COLOR_WARNING, 0);
+    }
+
+    if (p_item->batches.empty()) {
+        lv_obj_t * empty = lv_label_create(batch_list);
+        lv_label_set_text(empty, "暂无批次信息");
+        lv_obj_set_style_text_font(empty, font_cn_16, 0);
+        lv_obj_center(empty);
+    }
+
+    // 底部操作区
+    lv_obj_t * btn_take = lv_btn_create(popup);
+    lv_obj_set_size(btn_take, 140, 40);
+    lv_obj_align(btn_take, LV_ALIGN_BOTTOM_LEFT, 20, -20);
+    lv_obj_set_style_bg_color(btn_take, COLOR_DANGER, 0);
+    lv_obj_t * lbl_take = lv_label_create(btn_take);
+    lv_label_set_text(lbl_take, "全部取出");
+    lv_obj_set_style_text_font(lbl_take, font_cn_18, 0);
+    lv_obj_center(lbl_take);
+    // 这里使用一个 lambda + 捕获 popup_bg，但 LVGL 事件是 C 函数。
+    // 为了安全，我们可以复用 btn_take_all_cb 并将 popup_bg 存在 btn 的 user_data 里，把 name 放哪？
+    // 我们可以专门写一个弹出层的 take all callback
+    struct TakeAllData {
+        char name[64];
+        lv_obj_t* popup_bg;
+    };
+    TakeAllData* data = (TakeAllData*)malloc(sizeof(TakeAllData));
+    strncpy(data->name, name.c_str(), sizeof(data->name));
+    data->popup_bg = popup_bg;
+
+    lv_obj_add_event_cb(btn_take, [](lv_event_t* e){
+        lv_event_code_t code = lv_event_get_code(e);
+        TakeAllData* d = (TakeAllData*)lv_event_get_user_data(e);
+        if (code == LV_EVENT_CLICKED) {
+            smart_fridge::inventory::clear_ingredient(d->name);
+            app_inventory_refresh();
+            lv_obj_del(d->popup_bg);
+        } else if (code == LV_EVENT_DELETE) {
+            free(d);
+        }
+    }, LV_EVENT_ALL, data);
+}
+
 static void card_click_cb(lv_event_t * e) {
-    // Add interaction logic here if needed later
+    lv_event_code_t code = lv_event_get_code(e);
+    char * name = (char*)lv_event_get_user_data(e);
+    if (!name) return;
+
+    if (code == LV_EVENT_CLICKED) {
+        create_ingredient_detail_popup(name);
+    } else if (code == LV_EVENT_DELETE) {
+        free(name);
+    }
 }
 
 static void render_inventory_items(int filter_mode) {
@@ -51,7 +247,7 @@ static void render_inventory_items(int filter_mode) {
         lv_obj_t * card = lv_obj_create(content_area);
         lv_obj_set_size(card, 240, 160);
         lv_obj_add_style(card, &style_card, 0);
-        lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_ALL, strdup(item.name.c_str()));
 
         if (filter_mode == 1 || remaining <= 3.0) {
             lv_obj_set_style_border_width(card, 2, 0);
@@ -94,6 +290,33 @@ static void render_inventory_items(int filter_mode) {
         }
         lv_obj_set_style_text_font(suggestion, font_cn_16, 0);
         lv_obj_align(suggestion, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+        // +/- 按钮
+        lv_obj_t * btn_minus = lv_btn_create(card);
+        lv_obj_set_size(btn_minus, 32, 32);
+        lv_obj_align(btn_minus, LV_ALIGN_BOTTOM_RIGHT, -40, 0);
+        lv_obj_set_style_bg_color(btn_minus, lv_color_hex(0xF0F0F0), 0);
+        lv_obj_set_style_text_color(btn_minus, COLOR_TEXT_MAIN, 0);
+        lv_obj_set_style_radius(btn_minus, 16, 0);
+        lv_obj_set_style_pad_all(btn_minus, 0, 0);
+        lv_obj_t * lbl_minus = lv_label_create(btn_minus);
+        lv_label_set_text(lbl_minus, LV_SYMBOL_MINUS);
+        lv_obj_set_style_text_font(lbl_minus, &lv_font_montserrat_18, 0);
+        lv_obj_center(lbl_minus);
+        lv_obj_add_event_cb(btn_minus, btn_sub_cb, LV_EVENT_ALL, strdup(item.name.c_str()));
+
+        lv_obj_t * btn_plus = lv_btn_create(card);
+        lv_obj_set_size(btn_plus, 32, 32);
+        lv_obj_align(btn_plus, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+        lv_obj_set_style_bg_color(btn_plus, COLOR_PRIMARY, 0);
+        lv_obj_set_style_text_color(btn_plus, lv_color_white(), 0);
+        lv_obj_set_style_radius(btn_plus, 16, 0);
+        lv_obj_set_style_pad_all(btn_plus, 0, 0);
+        lv_obj_t * lbl_plus = lv_label_create(btn_plus);
+        lv_label_set_text(lbl_plus, LV_SYMBOL_PLUS);
+        lv_obj_set_style_text_font(lbl_plus, &lv_font_montserrat_18, 0);
+        lv_obj_center(lbl_plus);
+        lv_obj_add_event_cb(btn_plus, btn_add_cb, LV_EVENT_ALL, strdup(item.name.c_str()));
     }
 
     if (count == 0) {

@@ -116,6 +116,7 @@ void gui_launcher_init(lv_obj_t* parent) {
     lv_obj_t * msg_content = lv_label_create(msg_card);
     lv_label_set_text(msg_content, "记得买牛奶！\n晚上回来吃饭。");
     lv_obj_add_style(msg_content, &style_text_sub, 0);
+    lv_obj_set_style_text_font(msg_content, font_cn_18, 0);
     lv_obj_align(msg_content, LV_ALIGN_TOP_LEFT, 10, 40);
 
     // ------------------------------------------------------------------------
@@ -142,10 +143,10 @@ void gui_launcher_init(lv_obj_t* parent) {
 
     AppItem apps[] = {
         {LV_SYMBOL_LIST, "库存管理", GUI_APP_INVENTORY},
-        {LV_SYMBOL_IMAGE, "智能食谱", GUI_APP_RECIPES},
+        {LV_SYMBOL_FILE, "我的食谱", GUI_APP_RECIPES},
         {LV_SYMBOL_SETTINGS, "系统设置", GUI_APP_SETTINGS},
         {LV_SYMBOL_AUDIO, "语音助手", GUI_APP_VOICE_ASSIST},
-        {LV_SYMBOL_DUMMY, "购物清单", GUI_APP_SHOPPING}
+        {LV_SYMBOL_EDIT, "购物清单", GUI_APP_SHOPPING}
     };
 
     int num_apps = sizeof(apps) / sizeof(apps[0]);
