@@ -21,9 +21,17 @@ void gui_port_init(void) {
     
     // Increase LVGL task stack size for FreeType dynamic rendering
     cfg.lvgl_port_cfg.task_stack = 32768;
+    
+    // Enable software rotation to avoid hardware rotation constraints (e.g. swap_xy not supported)
+    cfg.flags.sw_rotate = 1;
 
     // Initialize the LCD, touch, and LVGL timer task with custom config
-    bsp_display_start_with_config(&cfg);
+    lv_display_t *disp = bsp_display_start_with_config(&cfg);
+    
+    // Rotate the display 180 degrees (upside down fix)
+    if (disp) {
+        lv_disp_set_rotation(disp, LV_DISP_ROT_180);
+    }
     
     // Turn on backlight
     bsp_display_backlight_on();

@@ -30,6 +30,7 @@
         <nav class="glass-nav">
             <button class="nav-btn active" data-target="view-inventory">库存</button>
             <button class="nav-btn" data-target="view-recipes">食谱</button>
+            <button class="nav-btn" data-target="view-dashboard">看板</button>
             <button class="nav-btn" data-target="view-chat">AI 助手</button>
             <button class="nav-btn" data-target="view-settings">设置</button>
         </nav>
@@ -73,6 +74,39 @@
                 <div id="recipe-container">
                     <!-- 食谱卡片由 JS 生成 -->
                 </div>
+            </section>
+
+            <!-- 视图: 看板（天气 + 留言板） -->
+            <section id="view-dashboard" class="view">
+                <!-- 天气卡片 -->
+                <div class="section-header">
+                    <h2>天气</h2>
+                    <button class="btn btn-secondary btn-small" id="weather-refresh-btn">刷新</button>
+                </div>
+                <div class="weather-card glass-panel-inner" id="weather-display">
+                    <div class="weather-main">
+                        <span class="weather-temp" id="weather-temp">--°</span>
+                        <span class="weather-text" id="weather-text">--</span>
+                    </div>
+                    <div class="weather-meta">
+                        <span id="weather-city">--</span>
+                        <span id="weather-updated" class="text-muted">未刷新</span>
+                    </div>
+                </div>
+
+
+                <!-- 留言板 -->
+                <div class="section-header" style="margin-top:24px;">
+                    <h2>留言板</h2>
+                    <span class="item-count" id="notes-count">0 条</span>
+                </div>
+                <div class="notes-list" id="notes-list">
+                    <!-- 留言由 JS 生成 -->
+                </div>
+                <form class="notes-input-area" id="notes-form">
+                    <input type="text" id="notes-input" placeholder="写一条留言..." maxlength="100" required autocomplete="off">
+                    <button type="submit" class="btn btn-primary">添加</button>
+                </form>
             </section>
 
             <!-- 视图: 记录 -->
@@ -130,6 +164,43 @@
                         </div>
                     </form>
                 </div>
+
+                <div class="settings-form glass-panel-inner" style="margin-top: 24px;">
+                    <form id="weather-form">
+                        <h3>天气 API 配置</h3>
+                        <div class="input-group">
+                            <label>API URL（含 {location} {key} 占位符）</label>
+                            <input type="text" id="wx-url" placeholder="https://devapi.qweather.com/v7/weather/now?location={location}&key={key}">
+                        </div>
+                        <div class="input-group">
+                            <label>API Key</label>
+                            <input type="password" id="wx-key" placeholder="留空表示不修改">
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>城市名（显示用）</label>
+                                <input type="text" id="wx-city" placeholder="如：北京">
+                            </div>
+                            <div class="input-group">
+                                <label>位置参数（LocationID 或经纬度）</label>
+                                <input type="text" id="wx-location" placeholder="如：101010100">
+                            </div>
+                        </div>
+                        <div class="input-row">
+                            <div class="input-group">
+                                <label>温度字段路径</label>
+                                <input type="text" id="wx-temp-path" placeholder="now.temp">
+                            </div>
+                            <div class="input-group">
+                                <label>天气描述字段路径</label>
+                                <input type="text" id="wx-text-path" placeholder="now.text">
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <button type="submit" class="btn btn-primary">保存并刷新天气</button>
+                        </div>
+                    </form>
+                </div>
             </section>
         </main>
 
@@ -147,8 +218,15 @@
                         <select id="category">
                             <option value="水果">水果</option>
                             <option value="蔬菜">蔬菜</option>
-                            <option value="肉类">肉类</option>
+                            <option value="肉禽">肉禽</option>
+                            <option value="海鲜">海鲜</option>
+                            <option value="蛋奶">蛋奶</option>
+                            <option value="豆制品">豆制品</option>
+                            <option value="主食">主食</option>
+                            <option value="调味品">调味品</option>
                             <option value="饮品">饮品</option>
+                            <option value="零食">零食</option>
+                            <option value="冻品">冻品</option>
                             <option value="其他">其他</option>
                         </select>
                     </div>

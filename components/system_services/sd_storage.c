@@ -25,7 +25,13 @@ static const char *TAG = "SD_Init";
 #define PIN_NUM_CLK   43
 #define PIN_NUM_CS    42
 
+static bool s_sd_initialized = false;
+
 int sd_card_init(void) {
+    if (s_sd_initialized) {
+        ESP_LOGI(TAG, "SD card already initialized.");
+        return 0;
+    }
     esp_err_t ret;
 
     // FATFS 挂载配置
@@ -79,19 +85,18 @@ int sd_card_init(void) {
         .max_transfer_sz = 4000,
     };
 
-    ret = spi_bus_initialize(SPI2_HOST, &bus_cfg, SDSPI_DEFAULT_DMA);
-    if (ret != ESP_OK) {
+    ret = spi_bus_initialize(SPI3_HOST, &bus_cfg, SDSPI_DEFAULT_DMA);
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "Failed to initialize SPI bus (%s).", esp_err_to_name(ret));
         return -1;
     }
 
-    // 使用 SPI 主机接口驱动 SD 卡
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = SPI2_HOST;
+    host.slot = SPI3_HOST;
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.gpio_cs = PIN_NUM_CS;
-    slot_config.host_id = SPI2_HOST;
+    slot_config.host_id = SPI3_HOST;
 
     ESP_LOGI(TAG, "Mounting filesystem to %s", mount_point);
     ret = esp_vfs_fat_sdspi_mount(mount_point, &host, &slot_config, &mount_config, &card);
@@ -102,7 +107,7 @@ int sd_card_init(void) {
         } else {
             ESP_LOGE(TAG, "Failed to initialize the card (%s).", esp_err_to_name(ret));
         }
-        spi_bus_free(SPI2_HOST);
+        spi_bus_free(SPI3_HOST);
         return -1;
     }
 
@@ -124,5 +129,6 @@ int sd_card_init(void) {
     remove("/sdcard/writetst.txt");
     ESP_LOGI(TAG, "Write test passed. SD card is writable.");
 
+    s_sd_initialized = true;
     return 0;
 }

@@ -15,6 +15,13 @@ static char s_wifi_pass[BUF_SIZE];
 static char s_llm_url[BUF_SIZE];
 static char s_llm_key[BUF_SIZE];
 static char s_llm_model[BUF_SIZE];
+// Weather API config (URL 含占位符，可能较长，用更大缓冲)
+static char s_wx_url[512];
+static char s_wx_key[BUF_SIZE];
+static char s_wx_city[BUF_SIZE];
+static char s_wx_location[BUF_SIZE];
+static char s_wx_temp_path[BUF_SIZE];
+static char s_wx_text_path[BUF_SIZE];
 
 /**
  * @brief Helper: read a string from NVS. If key not found, use fallback default.
@@ -81,6 +88,12 @@ esp_err_t credentials_init(void) {
         strncpy(s_llm_url, CONFIG_SMART_FRIDGE_DEFAULT_LLM_API_URL, BUF_SIZE - 1);
         strncpy(s_llm_key, CONFIG_SMART_FRIDGE_DEFAULT_LLM_API_KEY, BUF_SIZE - 1);
         strncpy(s_llm_model, CONFIG_SMART_FRIDGE_DEFAULT_LLM_MODEL, BUF_SIZE - 1);
+        strncpy(s_wx_url, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_URL, sizeof(s_wx_url) - 1);
+        strncpy(s_wx_key, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_KEY, BUF_SIZE - 1);
+        strncpy(s_wx_city, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_CITY, BUF_SIZE - 1);
+        strncpy(s_wx_location, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_LOCATION, BUF_SIZE - 1);
+        strncpy(s_wx_temp_path, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_TEMP_PATH, BUF_SIZE - 1);
+        strncpy(s_wx_text_path, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_TEXT_PATH, BUF_SIZE - 1);
         return ESP_OK;
     } else if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open NVS namespace '%s': %s", NVS_NAMESPACE, esp_err_to_name(err));
@@ -93,6 +106,12 @@ esp_err_t credentials_init(void) {
     load_nvs_string(handle, "llm_url",   s_llm_url,   BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_LLM_API_URL);
     load_nvs_string(handle, "llm_key",   s_llm_key,   BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_LLM_API_KEY);
     load_nvs_string(handle, "llm_model", s_llm_model, BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_LLM_MODEL);
+    load_nvs_string(handle, "wx_url",       s_wx_url,       sizeof(s_wx_url), CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_URL);
+    load_nvs_string(handle, "wx_key",       s_wx_key,       BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_KEY);
+    load_nvs_string(handle, "wx_city",      s_wx_city,      BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_CITY);
+    load_nvs_string(handle, "wx_location",  s_wx_location,  BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_LOCATION);
+    load_nvs_string(handle, "wx_temp_path", s_wx_temp_path, BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_TEMP_PATH);
+    load_nvs_string(handle, "wx_text_path", s_wx_text_path, BUF_SIZE, CONFIG_SMART_FRIDGE_DEFAULT_WEATHER_TEXT_PATH);
 
     nvs_close(handle);
     ESP_LOGI(TAG, "Credentials loaded successfully");
@@ -168,5 +187,62 @@ esp_err_t credentials_set_llm_model(const char* model) {
     s_llm_model[BUF_SIZE - 1] = '\0';
 
     ESP_LOGI(TAG, "LLM model updated to: %s", model);
+    return ESP_OK;
+}
+
+// ======== Weather API Config ========
+
+const char* credentials_get_weather_url(void)      { return s_wx_url; }
+const char* credentials_get_weather_key(void)      { return s_wx_key; }
+const char* credentials_get_weather_city(void)     { return s_wx_city; }
+const char* credentials_get_weather_location(void) { return s_wx_location; }
+const char* credentials_get_weather_temp_path(void){ return s_wx_temp_path; }
+const char* credentials_get_weather_text_path(void){ return s_wx_text_path; }
+
+esp_err_t credentials_set_weather_url(const char* url) {
+    esp_err_t err = save_nvs_string("wx_url", url);
+    if (err != ESP_OK) return err;
+    strncpy(s_wx_url, url, sizeof(s_wx_url) - 1);
+    s_wx_url[sizeof(s_wx_url) - 1] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t credentials_set_weather_key(const char* key) {
+    esp_err_t err = save_nvs_string("wx_key", key);
+    if (err != ESP_OK) return err;
+    strncpy(s_wx_key, key, BUF_SIZE - 1);
+    s_wx_key[BUF_SIZE - 1] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t credentials_set_weather_city(const char* city) {
+    esp_err_t err = save_nvs_string("wx_city", city);
+    if (err != ESP_OK) return err;
+    strncpy(s_wx_city, city, BUF_SIZE - 1);
+    s_wx_city[BUF_SIZE - 1] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t credentials_set_weather_location(const char* location) {
+    esp_err_t err = save_nvs_string("wx_location", location);
+    if (err != ESP_OK) return err;
+    strncpy(s_wx_location, location, BUF_SIZE - 1);
+    s_wx_location[BUF_SIZE - 1] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t credentials_set_weather_temp_path(const char* path) {
+    esp_err_t err = save_nvs_string("wx_temp_path", path);
+    if (err != ESP_OK) return err;
+    strncpy(s_wx_temp_path, path, BUF_SIZE - 1);
+    s_wx_temp_path[BUF_SIZE - 1] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t credentials_set_weather_text_path(const char* path) {
+    esp_err_t err = save_nvs_string("wx_text_path", path);
+    if (err != ESP_OK) return err;
+    strncpy(s_wx_text_path, path, BUF_SIZE - 1);
+    s_wx_text_path[BUF_SIZE - 1] = '\0';
     return ESP_OK;
 }

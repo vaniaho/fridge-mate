@@ -12,6 +12,11 @@ static const char *TAG = "WebPanelApi";
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "rtc_time.h"
+#include "notes_board.hpp"
+#include "weather.hpp"
+#include "dashboard.hpp"
+#include "gui_bridge.h"
+#include "gui_app.h"
 
 // GET /api/inventory
 static esp_err_t get_inventory_handler(httpd_req_t *req) {
@@ -402,6 +407,169 @@ static esp_err_t ws_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// ============================================================
+// Notes Board (留言板)
+// ============================================================
+
+// GET /api/notes — 返回留言列表
+static esp_err_t get_notes_handler(httpd_req_t *req) {
+    auto notes = smart_fridge::dashboard::notes_get_all();
+    cJSON *root = cJSON_CreateArray();
+    for (const auto& note : notes) {
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "timestamp", (double)note.timestamp);
+        cJSON_AddStringToObject(obj, "text", note.text.c_str());
+        cJSON_AddItemToArray(root, obj);
+    }
+    const char *json = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free((void *)json);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+// POST /api/notes — 增/删/清空留言
+static esp_err_t post_notes_handler(httpd_req_t *req) {
+    char buf[1024];
+    int ret, remaining = req->content_len;
+    if (remaining >= (int)sizeof(buf)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Payload too large");
+        return ESP_FAIL;
+    }
+    if ((ret = httpd_req_recv(req, buf, remaining)) <= 0) {
+        return ESP_FAIL;
+    }
+    buf[ret] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *action = cJSON_GetObjectItem(root, "action");
+    if (action && action->valuestring) {
+        if (strcmp(action->valuestring, "add") == 0) {
+            cJSON *text = cJSON_GetObjectItem(root, "text");
+            if (text && text->valuestring && strlen(text->valuestring) > 0) {
+                time_t new_ts = smart_fridge::dashboard::notes_add(text->valuestring);
+                if (new_ts) {
+                    gui_launcher_mark_note_new((long long)new_ts);
+                }
+            }
+        } else if (strcmp(action->valuestring, "delete") == 0) {
+            cJSON *ts = cJSON_GetObjectItem(root, "timestamp");
+            if (ts) {
+                smart_fridge::dashboard::notes_delete((time_t)ts->valuedouble);
+            }
+        } else if (strcmp(action->valuestring, "clear") == 0) {
+            smart_fridge::dashboard::notes_clear();
+        }
+    }
+    cJSON_Delete(root);
+
+    // 通知 LCD 桌面刷新留言板
+    gui_bridge_refresh_dashboard();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"status\":\"ok\"}", -1);
+    return ESP_OK;
+}
+
+// ============================================================
+// Weather (天气)
+// ============================================================
+
+// GET /api/weather — 返回天气缓存 + 配置（key 脱敏）
+static esp_err_t get_weather_handler(httpd_req_t *req) {
+    auto w = smart_fridge::dashboard::weather_get();
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "valid", w.valid);
+    if (w.valid) {
+        cJSON_AddNumberToObject(root, "temp", w.temp);
+        cJSON_AddStringToObject(root, "text", w.text.c_str());
+        cJSON_AddStringToObject(root, "city", w.city.c_str());
+        cJSON_AddNumberToObject(root, "updated", (double)w.updated);
+    }
+    // 配置（API Key 脱敏）
+    cJSON *cfg = cJSON_CreateObject();
+    cJSON_AddStringToObject(cfg, "wx_url", credentials_get_weather_url() ? credentials_get_weather_url() : "");
+    cJSON_AddStringToObject(cfg, "wx_key", (credentials_get_weather_key() && strlen(credentials_get_weather_key()) > 0) ? "********" : "");
+    cJSON_AddStringToObject(cfg, "wx_city", credentials_get_weather_city() ? credentials_get_weather_city() : "");
+    cJSON_AddStringToObject(cfg, "wx_location", credentials_get_weather_location() ? credentials_get_weather_location() : "");
+    cJSON_AddStringToObject(cfg, "wx_temp_path", credentials_get_weather_temp_path() ? credentials_get_weather_temp_path() : "");
+    cJSON_AddStringToObject(cfg, "wx_text_path", credentials_get_weather_text_path() ? credentials_get_weather_text_path() : "");
+    cJSON_AddItemToObject(root, "config", cfg);
+
+    const char *json = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free((void *)json);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+// POST /api/weather — 更新天气 API 配置并触发立即刷新
+static esp_err_t post_weather_handler(httpd_req_t *req) {
+    char *buf = (char*)malloc(req->content_len + 1);
+    if (!buf) return ESP_FAIL;
+    int ret = httpd_req_recv(req, buf, req->content_len);
+    if (ret <= 0) { free(buf); return ESP_FAIL; }
+    buf[ret] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    // 仅当传入了非空、非脱敏占位值时才更新
+    cJSON *url = cJSON_GetObjectItem(root, "wx_url");
+    if (url && url->valuestring) credentials_set_weather_url(url->valuestring);
+
+    cJSON *key = cJSON_GetObjectItem(root, "wx_key");
+    if (key && key->valuestring && strlen(key->valuestring) > 0 &&
+        strcmp(key->valuestring, "********") != 0) {
+        credentials_set_weather_key(key->valuestring);
+    }
+
+    cJSON *city = cJSON_GetObjectItem(root, "wx_city");
+    if (city && city->valuestring) credentials_set_weather_city(city->valuestring);
+
+    cJSON *loc = cJSON_GetObjectItem(root, "wx_location");
+    if (loc && loc->valuestring) credentials_set_weather_location(loc->valuestring);
+
+    cJSON *tp = cJSON_GetObjectItem(root, "wx_temp_path");
+    if (tp && tp->valuestring) credentials_set_weather_temp_path(tp->valuestring);
+
+    cJSON *txp = cJSON_GetObjectItem(root, "wx_text_path");
+    if (txp && txp->valuestring) credentials_set_weather_text_path(txp->valuestring);
+
+    cJSON_Delete(root);
+
+    // 配置更新后立即尝试刷新一次
+    bool ok = smart_fridge::dashboard::weather_refresh();
+
+    httpd_resp_set_type(req, "application/json");
+    if (ok) {
+        httpd_resp_send(req, "{\"status\":\"ok\",\"refreshed\":true}", -1);
+    } else {
+        httpd_resp_send(req, "{\"status\":\"ok\",\"refreshed\":false}", -1);
+    }
+    return ESP_OK;
+}
+
+// POST /api/weather/refresh — 手动触发天气刷新
+static esp_err_t post_weather_refresh_handler(httpd_req_t *req) {
+    bool ok = smart_fridge::dashboard::weather_refresh();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, ok ? "{\"status\":\"ok\",\"refreshed\":true}"
+                            : "{\"status\":\"ok\",\"refreshed\":false}", -1);
+    return ESP_OK;
+}
+
 void register_api_routes(httpd_handle_t server) {
     httpd_uri_t uri_get_inv = { .uri = "/api/inventory", .method = HTTP_GET, .handler = get_inventory_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_post_inv = { .uri = "/api/inventory", .method = HTTP_POST, .handler = post_inventory_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
@@ -412,6 +580,11 @@ void register_api_routes(httpd_handle_t server) {
     httpd_uri_t uri_post_chat = { .uri = "/api/chat", .method = HTTP_POST, .handler = post_chat_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_get_recipes = { .uri = "/api/recipes/match", .method = HTTP_GET, .handler = get_recipes_match_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_post_recipes = { .uri = "/api/recipes", .method = HTTP_POST, .handler = post_recipes_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_notes = { .uri = "/api/notes", .method = HTTP_GET, .handler = get_notes_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_notes = { .uri = "/api/notes", .method = HTTP_POST, .handler = post_notes_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_weather = { .uri = "/api/weather", .method = HTTP_GET, .handler = get_weather_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_weather = { .uri = "/api/weather", .method = HTTP_POST, .handler = post_weather_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_weather_refresh = { .uri = "/api/weather/refresh", .method = HTTP_POST, .handler = post_weather_refresh_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_ws = { .uri = "/ws", .method = HTTP_GET, .handler = ws_handler, .user_ctx = NULL, .is_websocket = true, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
 
     httpd_register_uri_handler(server, &uri_get_inv);
@@ -423,6 +596,11 @@ void register_api_routes(httpd_handle_t server) {
     httpd_register_uri_handler(server, &uri_post_chat);
     httpd_register_uri_handler(server, &uri_get_recipes);
     httpd_register_uri_handler(server, &uri_post_recipes);
+    httpd_register_uri_handler(server, &uri_get_notes);
+    httpd_register_uri_handler(server, &uri_post_notes);
+    httpd_register_uri_handler(server, &uri_get_weather);
+    httpd_register_uri_handler(server, &uri_post_weather);
+    httpd_register_uri_handler(server, &uri_post_weather_refresh);
     httpd_register_uri_handler(server, &uri_ws);
 }
 

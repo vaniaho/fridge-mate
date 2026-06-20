@@ -25,6 +25,10 @@ static void async_refresh_inventory_cb(void * user_data) {
     gui_app_refresh_inventory();
 }
 
+static void async_refresh_dashboard_cb(void * user_data) {
+    gui_launcher_refresh_dashboard();
+}
+
 static void async_show_notification_cb(void * user_data) {
     notif_data_t* data = (notif_data_t*)user_data;
     if (data) {
@@ -106,6 +110,11 @@ void gui_bridge_show_standby(void) {
 void gui_bridge_refresh_inventory(void) {
     ESP_LOGI(TAG, "Inventory list refresh requested");
     lv_async_call(async_refresh_inventory_cb, NULL);
+}
+
+void gui_bridge_refresh_dashboard(void) {
+    ESP_LOGI(TAG, "Dashboard refresh requested");
+    lv_async_call(async_refresh_dashboard_cb, NULL);
 }
 
 void gui_bridge_show_notification(const char* title, const char* message) {

@@ -42,6 +42,9 @@ void gui_bridge_go_back(void);
 /** @brief Request GUI to refresh the ingredient list view */
 void gui_bridge_refresh_inventory(void);
 
+/** @brief Request GUI to refresh the dashboard (weather + notes board) on the launcher */
+void gui_bridge_refresh_dashboard(void);
+
 /** @brief Show a notification popup on the screen */
 void gui_bridge_show_notification(const char* title, const char* message);
 

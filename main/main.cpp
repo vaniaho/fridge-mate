@@ -21,6 +21,9 @@
 #include "esp_lvgl_port.h"
 #include "esp_vfs_fat.h"
 #include "vfs_fat_internal.h"
+#include "dashboard.hpp"
+#include "notes_board.hpp"
+#include "weather.hpp"
 
 // 声明 task_manager 暴露出来的初始化函数
 extern "C" void task_manager_init(void);
@@ -217,6 +220,13 @@ extern "C" void app_main(void) {
         ESP_LOGE(TAG, "  食材数据库初始化失败！系统将以降级模式运行");
     }
 
+    // 留言板初始化（不依赖网络，SD 卡可用时持久化）
+    ESP_LOGI(TAG, "[Phase 2] 初始化留言板...");
+    smart_fridge::dashboard::notes_init();
+
+    // 天气模块初始化（仅读取 NVS 配置，不主动拉取；拉取在 dashboard 任务中触发）
+    smart_fridge::dashboard::weather_init();
+
     // --------------------------------------------------------
     // Phase 3: 网络连接 & 时间同步
     //   WiFi 未配置或连接失败时进入离线模式
@@ -274,8 +284,14 @@ extern "C" void app_main(void) {
     lvgl_port_unlock();
     gui_bridge_init();
 
+    // 注册 dashboard 刷新回调：天气刷新成功后通知 GUI 更新桌面天气卡片
+    dashboard_set_refresh_callback(gui_bridge_refresh_dashboard);
+
     // 更新 GUI 中的 WiFi 图标状态
     gui_app_set_wifi_status(s_network_ok);
+
+    // 首次刷新桌面留言板（天气缓存尚未拉取，会显示占位 "--"）
+    gui_bridge_refresh_dashboard();
 
     // --------------------------------------------------------
     // Phase 6: 启动后台周期任务
@@ -283,6 +299,10 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "[Phase 6] 启动后台任务...");
     xTaskCreate(expiry_check_task, "expiry_chk", 4096, NULL, 3, NULL);
     ESP_LOGI(TAG, "  临期检查任务已启动 (每小时检查一次)");
+
+    // 启动 Dashboard 后台任务（每 30 分钟刷新天气，仅联网时生效）
+    dashboard_start_task();
+    ESP_LOGI(TAG, "  Dashboard 任务已启动 (每 30 分钟刷新天气)");
 
     // --------------------------------------------------------
     // 初始化完成：打印系统状态摘要

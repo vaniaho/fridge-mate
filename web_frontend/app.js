@@ -46,6 +46,14 @@ const recipeModal = document.getElementById('recipe-modal');
 const recipeForm = document.getElementById('recipe-form');
 const recipeIngList = document.getElementById('recipe-ingredients-list');
 
+// Dashboard (天气 + 留言板)
+const weatherRefreshBtn = document.getElementById('weather-refresh-btn');
+const weatherForm = document.getElementById('weather-form');
+const notesList = document.getElementById('notes-list');
+const notesCount = document.getElementById('notes-count');
+const notesForm = document.getElementById('notes-form');
+const notesInput = document.getElementById('notes-input');
+
 const iconMap = { '水果': '🍎', '蔬菜': '🥬', '肉类': '🥩', '饮品': '🥛', '其他': '📦', '家常菜': '🍲', '汤类': '🥣', '主食': '🍚', '素菜': '🥗' };
 
 function init() {
@@ -70,6 +78,7 @@ function setupRouter() {
             if (target === 'view-history') fetchHistory();
             if (target === 'view-settings') fetchSettings();
             if (target === 'view-recipes') fetchRecipes();
+            if (target === 'view-dashboard') { fetchWeather(); fetchNotes(); }
         });
     });
 }
@@ -277,6 +286,90 @@ function addChatMessage(text, isUser = false) {
     div.textContent = text;
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// === Dashboard: Weather & Notes ===
+async function fetchWeather() {
+    try {
+        const res = await fetch('/api/weather');
+        const data = await res.json();
+        renderWeather(data);
+    } catch (e) { console.error('Weather fetch failed', e); }
+}
+
+function renderWeather(data) {
+    const tempEl = document.getElementById('weather-temp');
+    const textEl = document.getElementById('weather-text');
+    const cityEl = document.getElementById('weather-city');
+    const updEl = document.getElementById('weather-updated');
+
+    if (data.valid) {
+        tempEl.textContent = Math.round(data.temp) + '°';
+        textEl.textContent = data.text || '--';
+        cityEl.textContent = data.city || '--';
+        if (data.updated) {
+            const d = new Date(data.updated * 1000);
+            updEl.textContent = '更新于 ' + d.toLocaleTimeString();
+        }
+    } else {
+        tempEl.textContent = '--°';
+        textEl.textContent = '未获取';
+        cityEl.textContent = '--';
+        updEl.textContent = '未刷新';
+    }
+
+    // 填充配置表单（Key 脱敏，显示占位）
+    const cfg = data.config || {};
+    document.getElementById('wx-url').value = cfg.wx_url || '';
+    document.getElementById('wx-key').value = '';
+    document.getElementById('wx-key').placeholder = (cfg.wx_key && cfg.wx_key === '********') ? '已配置（留空不修改）' : '未配置';
+    document.getElementById('wx-city').value = cfg.wx_city || '';
+    document.getElementById('wx-location').value = cfg.wx_location || '';
+    document.getElementById('wx-temp-path').value = cfg.wx_temp_path || '';
+    document.getElementById('wx-text-path').value = cfg.wx_text_path || '';
+}
+
+async function fetchNotes() {
+    try {
+        const res = await fetch('/api/notes');
+        const data = await res.json();
+        renderNotes(data);
+    } catch (e) { console.error('Notes fetch failed', e); }
+}
+
+function renderNotes(notes) {
+    notesCount.textContent = `${notes.length} 条`;
+    notesList.innerHTML = '';
+    if (notes.length === 0) {
+        notesList.innerHTML = '<div class="text-muted" style="text-align:center;padding:20px;">暂无留言</div>';
+        return;
+    }
+    notes.forEach(note => {
+        const item = document.createElement('div');
+        item.className = 'note-item';
+        const date = new Date(note.timestamp * 1000).toLocaleString();
+        item.innerHTML = `
+            <div class="note-info">
+                <div class="note-text">${escapeHtml(note.text)}</div>
+                <div class="note-date text-muted">${date}</div>
+            </div>
+            <button class="icon-btn remove" onclick="deleteNote(${note.timestamp})" title="删除">🗑️</button>
+        `;
+        notesList.appendChild(item);
+    });
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function deleteNote(timestamp) {
+    if (!confirm('确定删除这条留言吗？')) return;
+    await fetch('/api/notes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', timestamp: timestamp })
+    });
+    fetchNotes();
 }
 
 // === Recipes ===
@@ -525,6 +618,51 @@ function setupEventListeners() {
         }
     });
 
+    // Dashboard listeners
+    weatherRefreshBtn.addEventListener('click', async () => {
+        weatherRefreshBtn.disabled = true;
+        weatherRefreshBtn.textContent = '刷新中...';
+        try {
+            await fetch('/api/weather/refresh', { method: 'POST' });
+            fetchWeather();
+        } catch (e) {}
+        weatherRefreshBtn.disabled = false;
+        weatherRefreshBtn.textContent = '刷新';
+    });
+
+    weatherForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = {
+            wx_url: document.getElementById('wx-url').value,
+            wx_key: document.getElementById('wx-key').value,
+            wx_city: document.getElementById('wx-city').value,
+            wx_location: document.getElementById('wx-location').value,
+            wx_temp_path: document.getElementById('wx-temp-path').value,
+            wx_text_path: document.getElementById('wx-text-path').value,
+        };
+        try {
+            const res = await fetch('/api/weather', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const r = await res.json();
+            fetchWeather();
+            alert(r.refreshed ? '配置已保存，天气已刷新。' : '配置已保存，但刷新失败（请检查配置或网络）。');
+        } catch (e) { alert('保存失败'); }
+    });
+
+    notesForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const text = notesInput.value.trim();
+        if (!text) return;
+        await fetch('/api/notes', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'add', text: text })
+        });
+        notesInput.value = '';
+        fetchNotes();
+    });
+
     setInterval(fetchStatus, 5000); // Poll status every 5s
 }
 
@@ -551,6 +689,7 @@ function setupWebSocket() {
         if (e.data === 'update') {
             fetchInventory();
             if (document.getElementById('view-history').classList.contains('active')) fetchHistory();
+            if (document.getElementById('view-dashboard').classList.contains('active')) fetchNotes();
         }
     };
 }
@@ -560,6 +699,7 @@ window.decreaseIngredient = decreaseIngredient;
 window.increaseIngredient = increaseIngredient;
 window.removeAllIngredient = removeAllIngredient;
 window.openEditModal = openEditModal;
+window.deleteNote = deleteNote;
 window.openRecipeEdit = async (name) => {
     // To implement edit, we can fetch all recipes (not match) or find in match array
     try {

@@ -56,10 +56,11 @@ esp_err_t rtc_time_init(void) {
 
     // 3. 阻塞等待首次同步完成，最多 30 秒
     ret = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(30000));
-    if (ret == ESP_OK) {
+    if (ret == ESP_OK || s_time_synced) {
         char buf[32];
         rtc_time_get_formatted(buf, sizeof(buf));
         ESP_LOGI(TAG, "Time sync successful: %s", buf);
+        s_time_synced = true;
     } else {
         ESP_LOGW(TAG, "NTP sync timeout! System time may be inaccurate.");
         ESP_LOGW(TAG, "Time will auto-sync when NTP server becomes reachable.");

@@ -2,13 +2,35 @@
 #include "gui_app.h"
 #include "gui_styles.h"
 #include "system_manager.hpp"
+#include "notes_board.hpp"
+#include "weather.hpp"
 #include <stdio.h>
 #include <time.h>
+#include <vector>
+#include <set>
 
 using namespace smart_fridge::system;
 extern lv_obj_t * wifi_icon_ptr;
 
 static lv_obj_t * time_label_ptr = NULL;
+
+// 桌面天气卡片 / 留言板控件指针（供后台数据刷新使用）
+static lv_obj_t * weather_temp_ptr = NULL;
+static lv_obj_t * weather_desc_ptr = NULL;
+
+// 留言板容器 (msg_card 是外层白色卡片, msg_list 是可滚动的内部列表)
+static lv_obj_t * msg_card = NULL;
+static lv_obj_t * msg_list = NULL;
+
+// 新留言高亮追踪：存储「尚未被用户点击确认」的 timestamp
+static std::set<time_t> new_note_timestamps;
+
+// 新留言高亮颜色: 柔和的暖橙渐变底色 (类似 Material amber-50)
+#define COLOR_NOTE_NEW_BG     lv_color_hex(0xFFF3E0)
+// 新留言左侧色条: 活力橙
+#define COLOR_NOTE_NEW_ACCENT lv_color_hex(0xFF9800)
+// 普通留言底色: 白色
+#define COLOR_NOTE_NORMAL_BG  lv_color_hex(0xFFFFFF)
 
 static void clock_timer_cb(lv_timer_t * timer) {
     if (time_label_ptr == NULL) return;
@@ -35,6 +57,25 @@ static void app_btn_event_cb(lv_event_t * e) {
 static void camera_btn_event_cb(lv_event_t * e) {
     // 触发拍照存取
     gui_app_show_camera_preview();
+}
+
+// 点击留言板卡片（空白区域）→ 刷新留言列表
+static void msg_card_click_cb(lv_event_t * e) {
+    gui_launcher_refresh_dashboard();
+}
+
+// 点击单条留言 → 取消该条的高亮
+static void note_item_click_cb(lv_event_t * e) {
+    time_t ts = (time_t)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t * item = lv_event_get_target(e);
+
+    if (new_note_timestamps.count(ts)) {
+        new_note_timestamps.erase(ts);
+        // 恢复普通样式
+        lv_obj_set_style_bg_color(item, COLOR_NOTE_NORMAL_BG, 0);
+        // 移除左侧色条
+        lv_obj_set_style_border_width(item, 0, 0);
+    }
 }
 
 void gui_launcher_init(lv_obj_t* parent) {
@@ -92,32 +133,46 @@ void gui_launcher_init(lv_obj_t* parent) {
     lv_obj_add_style(weather_card, &style_card, 0);
     
     lv_obj_t * weather_temp = lv_label_create(weather_card);
-    lv_label_set_text(weather_temp, "28°C");
+    lv_label_set_text(weather_temp, "--°");
     lv_obj_add_style(weather_temp, &style_text_title, 0);
     lv_obj_set_style_text_font(weather_temp, font_cn_36, 0);
     lv_obj_align(weather_temp, LV_ALIGN_TOP_LEFT, 10, 10);
-    
+    weather_temp_ptr = weather_temp;
+
     lv_obj_t * weather_desc = lv_label_create(weather_card);
-    lv_label_set_text(weather_desc, "北京 · 晴");
+    lv_label_set_text(weather_desc, "-- · --");
     lv_obj_add_style(weather_desc, &style_text_sub, 0);
     lv_obj_align(weather_desc, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    weather_desc_ptr = weather_desc;
 
-    // Message Board widget
-    lv_obj_t * msg_card = lv_obj_create(left_col);
+    // ================================================================
+    //  Message Board widget (留言板) — 支持逐条渲染 + 新留言高亮
+    // ================================================================
+    msg_card = lv_obj_create(left_col);
     lv_obj_set_size(msg_card, LV_PCT(100), 200);
     lv_obj_align(msg_card, LV_ALIGN_TOP_LEFT, 0, 140);
     lv_obj_add_style(msg_card, &style_card, 0);
+    lv_obj_clear_flag(msg_card, LV_OBJ_FLAG_SCROLLABLE);
+    // 点击空白区域 → 刷新
+    lv_obj_add_flag(msg_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(msg_card, msg_card_click_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * msg_title = lv_label_create(msg_card);
     lv_label_set_text(msg_title, "留言板");
     lv_obj_add_style(msg_title, &style_text_main, 0);
-    lv_obj_align(msg_title, LV_ALIGN_TOP_LEFT, 10, 10);
+    lv_obj_align(msg_title, LV_ALIGN_TOP_LEFT, 10, 5);
 
-    lv_obj_t * msg_content = lv_label_create(msg_card);
-    lv_label_set_text(msg_content, "记得买牛奶！\n晚上回来吃饭。");
-    lv_obj_add_style(msg_content, &style_text_sub, 0);
-    lv_obj_set_style_text_font(msg_content, font_cn_18, 0);
-    lv_obj_align(msg_content, LV_ALIGN_TOP_LEFT, 10, 40);
+    // 留言列表容器（可滚动，位于标题下方）
+    msg_list = lv_obj_create(msg_card);
+    lv_obj_set_size(msg_list, LV_PCT(100) - 10, 160);
+    lv_obj_align(msg_list, LV_ALIGN_TOP_LEFT, 5, 35);
+    lv_obj_set_style_bg_opa(msg_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(msg_list, 0, 0);
+    lv_obj_set_style_pad_all(msg_list, 0, 0);
+    lv_obj_set_style_pad_row(msg_list, 6, 0);
+    lv_obj_set_flex_flow(msg_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollbar_mode(msg_list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scroll_dir(msg_list, LV_DIR_VER);
 
     // ------------------------------------------------------------------------
     // 3. Right Column: App Grid (~640px)
@@ -202,4 +257,101 @@ void gui_launcher_init(lv_obj_t* parent) {
     lv_obj_set_style_text_color(banner_desc, lv_color_white(), 0);
     lv_obj_set_style_text_opa(banner_desc, LV_OPA_80, 0);
     lv_obj_align(banner_desc, LV_ALIGN_RIGHT_MID, -30, 0);
+}
+
+// ============================================================
+// 桌面实时数据刷新（由 gui_bridge_refresh_dashboard 触发）
+// ============================================================
+
+void gui_launcher_update_weather(float temp, const char* city, const char* text) {
+    if (weather_temp_ptr) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.0f°", temp);
+        lv_label_set_text(weather_temp_ptr, buf);
+    }
+    if (weather_desc_ptr) {
+        char buf[64];
+        const char* c = city ? city : "--";
+        const char* t = (text && text[0]) ? text : "--";
+        snprintf(buf, sizeof(buf), "%s · %s", c, t);
+        lv_label_set_text(weather_desc_ptr, buf);
+    }
+}
+
+void gui_launcher_update_notes(const void* notes_vec_ptr) {
+    if (!msg_list || !lv_obj_is_valid(msg_list)) return;
+
+    // 清空旧的留言条目
+    lv_obj_clean(msg_list);
+
+    if (!notes_vec_ptr) {
+        lv_obj_t * empty = lv_label_create(msg_list);
+        lv_label_set_text(empty, "暂无留言");
+        lv_obj_add_style(empty, &style_text_sub, 0);
+        return;
+    }
+
+    const std::vector<smart_fridge::dashboard::Note>* notes =
+        static_cast<const std::vector<smart_fridge::dashboard::Note>*>(notes_vec_ptr);
+
+    if (notes->empty()) {
+        lv_obj_t * empty = lv_label_create(msg_list);
+        lv_label_set_text(empty, "暂无留言");
+        lv_obj_add_style(empty, &style_text_sub, 0);
+        return;
+    }
+
+    for (const auto& note : *notes) {
+
+        bool is_new = new_note_timestamps.count(note.timestamp) > 0;
+
+        lv_obj_t * item = lv_obj_create(msg_list);
+        lv_obj_set_size(item, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_all(item, 6, 0);
+        lv_obj_set_style_radius(item, 8, 0);
+        lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+
+        if (is_new) {
+            // 新留言：暖橙高亮底色 + 左侧 3px 橙色色条
+            lv_obj_set_style_bg_color(item, COLOR_NOTE_NEW_BG, 0);
+            lv_obj_set_style_bg_opa(item, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(item, 3, 0);
+            lv_obj_set_style_border_side(item, LV_BORDER_SIDE_LEFT, 0);
+            lv_obj_set_style_border_color(item, COLOR_NOTE_NEW_ACCENT, 0);
+        } else {
+            // 普通留言
+            lv_obj_set_style_bg_color(item, COLOR_NOTE_NORMAL_BG, 0);
+            lv_obj_set_style_bg_opa(item, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(item, 0, 0);
+        }
+
+        // 点击取消高亮
+        lv_obj_add_flag(item, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(item, note_item_click_cb, LV_EVENT_CLICKED,
+                            (void*)(intptr_t)note.timestamp);
+
+        lv_obj_t * label = lv_label_create(item);
+        lv_label_set_text(label, note.text.c_str());
+        lv_obj_set_style_text_font(label, font_cn_18, 0);
+        lv_obj_set_style_text_color(label, COLOR_TEXT_MAIN, 0);
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    }
+}
+
+void gui_launcher_mark_note_new(long long timestamp) {
+    new_note_timestamps.insert((time_t)timestamp);
+}
+
+void gui_launcher_refresh_dashboard(void) {
+    // 从 dashboard 缓存读取并刷新桌面天气与留言
+    auto w = smart_fridge::dashboard::weather_get();
+    if (w.valid) {
+        gui_launcher_update_weather(w.temp, w.city.c_str(), w.text.c_str());
+    } else {
+        gui_launcher_update_weather(0.0f, NULL, NULL);
+    }
+
+    auto notes = smart_fridge::dashboard::notes_get_all();
+    gui_launcher_update_notes(&notes);
 }

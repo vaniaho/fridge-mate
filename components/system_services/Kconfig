@@ -35,4 +35,44 @@ menu "Smart Fridge Configuration"
                 Default LLM model name used in API requests.
     endmenu
 
+    menu "Weather API Settings"
+        config SMART_FRIDGE_DEFAULT_WEATHER_URL
+            string "Default Weather API URL"
+            default "https://devapi.qweather.com/v7/weather/now?location={location}&key={key}"
+            help
+                Default weather API URL. Use {location} and {key} as placeholders;
+                they are replaced at runtime. Empty disables weather fetching.
+
+        config SMART_FRIDGE_DEFAULT_WEATHER_KEY
+            string "Default Weather API Key"
+            default ""
+            help
+                Default weather API key. Can be overridden at runtime via NVS.
+                WARNING: Do not commit real API keys to version control.
+
+        config SMART_FRIDGE_DEFAULT_WEATHER_CITY
+            string "Default Display City Name"
+            default ""
+            help
+                City name shown on the dashboard (e.g. "北京"). Display only.
+
+        config SMART_FRIDGE_DEFAULT_WEATHER_LOCATION
+            string "Default Weather Location Parameter"
+            default ""
+            help
+                Location query parameter (LocationID or "lng,lat") substituted into {location}.
+
+        config SMART_FRIDGE_DEFAULT_WEATHER_TEMP_PATH
+            string "Default Temperature JSON Path"
+            default "now.temp"
+            help
+                Dot-separated cJSON path to extract temperature from the API response.
+
+        config SMART_FRIDGE_DEFAULT_WEATHER_TEXT_PATH
+            string "Default Weather Text JSON Path"
+            default "now.text"
+            help
+                Dot-separated cJSON path to extract weather description text from the API response.
+    endmenu
+
 endmenu

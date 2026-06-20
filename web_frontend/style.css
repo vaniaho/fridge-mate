@@ -270,3 +270,28 @@ h3 { font-size: 1rem; margin-bottom: 16px; color: var(--primary); font-weight: 5
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+
+/* Utility */
+.text-muted { color: var(--text-muted); }
+.btn-small { padding: 6px 12px; font-size: 0.75rem; }
+
+/* === Dashboard: Weather === */
+.weather-card { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.weather-main { display: flex; align-items: baseline; gap: 12px; }
+.weather-temp { font-size: 2.5rem; font-weight: 700; color: var(--primary); }
+.weather-text { font-size: 1.1rem; color: var(--text-main); }
+.weather-meta { display: flex; justify-content: space-between; font-size: 0.8rem; }
+
+.weather-config { margin-bottom: 16px; padding: 16px; }
+.weather-config summary { cursor: pointer; font-size: 0.9rem; color: var(--text-muted); padding: 4px 0; }
+.weather-config[open] summary { margin-bottom: 16px; }
+
+/* === Dashboard: Notes Board === */
+.notes-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.note-item { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 10px; padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.note-info { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.note-text { font-size: 0.9rem; word-break: break-word; }
+.note-date { font-size: 0.7rem; }
+
+.notes-input-area { display: flex; gap: 8px; }
+.notes-input-area input { flex: 1; }
