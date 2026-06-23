@@ -1,5 +1,6 @@
 #include "gui_app.h"
 #include "gui_styles.h"
+#include "gui_icons.h"
 #include "lvgl.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -9,19 +10,6 @@
 
 static const char *TAG = "GuiApp";
 lv_obj_t * wifi_icon_ptr = NULL;
-
-// -------- Global Fonts & Styles --------
-const lv_font_t * font_cn_16 = &lv_font_montserrat_14; // Fallback
-const lv_font_t * font_cn_18 = &lv_font_montserrat_14; // Fallback
-const lv_font_t * font_cn_24 = &lv_font_montserrat_14; // Fallback
-const lv_font_t * font_cn_36 = &lv_font_montserrat_14; // Fallback
-const lv_font_t * font_icon_24 = &lv_font_montserrat_14; // Fallback
-
-lv_style_t style_screen_bg;
-lv_style_t style_card;
-lv_style_t style_text_main;
-lv_style_t style_text_sub;
-lv_style_t style_text_title;
 
 // -------- Screen Pointers --------
 static lv_obj_t * screen_splash = NULL;
@@ -43,110 +31,36 @@ extern lv_obj_t* app_inventory_create(void);
 extern lv_obj_t* app_recipes_create(void);
 extern lv_obj_t* app_settings_create(void);
 
-#if LV_USE_FREETYPE
-#include "extra/libs/freetype/lv_freetype.h"
-#include "esp_heap_caps.h"
-#include <stdio.h>
-#endif
-
-void gui_styles_init(void) {
-#if LV_USE_FREETYPE
-    ESP_LOGI(TAG, "Initializing FreeType fonts...");
-    if (lv_freetype_init(64, 1, 0)) {
-        lv_ft_info_t info;
-        memset(&info, 0, sizeof(info));
-        
-        // Cache the TTF file into PSRAM to dramatically speed up FreeType and prevent watchdog timeouts
-        FILE* f = fopen("/internal/NotoSansSC-Regular.ttf", "rb");
-        void* font_mem = NULL;
-        size_t font_size = 0;
-        if (f) {
-            fseek(f, 0, SEEK_END);
-            font_size = ftell(f);
-            fseek(f, 0, SEEK_SET);
-            font_mem = heap_caps_malloc(font_size, MALLOC_CAP_SPIRAM);
-            if (font_mem) {
-                ESP_LOGI(TAG, "Loading TTF into PSRAM (%u bytes)...", font_size);
-                fread(font_mem, 1, font_size, f);
-                info.mem = font_mem;
-                info.mem_size = font_size;
-                info.name = "/internal/NotoSansSC-Regular.ttf"; // Must not be NULL, used as cache key by LVGL
-            } else {
-                ESP_LOGE(TAG, "Failed to allocate PSRAM for font caching!");
-                info.name = "/internal/NotoSansSC-Regular.ttf";
-            }
-            fclose(f);
-        } else {
-            ESP_LOGE(TAG, "Failed to open TTF file!");
-            info.name = "/internal/NotoSansSC-Regular.ttf";
-        }
-
-        info.style = FT_FONT_STYLE_NORMAL;
-
-        info.weight = 16;
-        if (lv_ft_font_init(&info)) font_cn_16 = info.font;
-
-        info.weight = 18;
-        if (lv_ft_font_init(&info)) font_cn_18 = info.font;
-
-        info.weight = 24;
-        if (lv_ft_font_init(&info)) font_cn_24 = info.font;
-
-        info.weight = 36;
-        if (lv_ft_font_init(&info)) font_cn_36 = info.font;
-        
-        info.weight = 24;
-        if (lv_ft_font_init(&info)) font_icon_24 = info.font;
-        ESP_LOGI(TAG, "FreeType fonts loaded successfully!");
-    } else {
-        ESP_LOGE(TAG, "Failed to initialize FreeType!");
-    }
-#else
-#warning "LV_USE_FREETYPE is not enabled! Chinese characters will display as squares. Please enable it in menuconfig and provide the TTF font on the SD card."
-    ESP_LOGW(TAG, "FreeType not enabled. Using fallback fonts.");
-#endif
-
-    // 1. Init global styles
-    // 1. Init global styles
-    lv_style_init(&style_screen_bg);
-    lv_style_set_bg_color(&style_screen_bg, COLOR_BG);
-    lv_style_set_text_font(&style_screen_bg, font_cn_18);
-
-    lv_style_init(&style_card);
-    lv_style_set_bg_color(&style_card, COLOR_CARD);
-    lv_style_set_radius(&style_card, 16);
-    // Simple shadow
-    lv_style_set_shadow_width(&style_card, 12);
-    lv_style_set_shadow_ofs_y(&style_card, 4);
-    lv_style_set_shadow_opa(&style_card, LV_OPA_10);
-    lv_style_set_border_width(&style_card, 0);
-
-    lv_style_init(&style_text_main);
-    lv_style_set_text_color(&style_text_main, COLOR_TEXT_MAIN);
-    lv_style_set_text_font(&style_text_main, font_cn_18);
-
-    lv_style_init(&style_text_sub);
-    lv_style_set_text_color(&style_text_sub, COLOR_TEXT_SUB);
-    lv_style_set_text_font(&style_text_sub, font_cn_16);
-
-    lv_style_init(&style_text_title);
-    lv_style_set_text_color(&style_text_title, COLOR_TEXT_MAIN);
-    lv_style_set_text_font(&style_text_title, font_cn_24);
-}
-
 static void create_splash_screen(void) {
     screen_splash = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(screen_splash, lv_color_hex(0xE3F2FD), 0);
+    theme_apply_gradient_bg(screen_splash, THEME_PRIMARY, THEME_ACCENT);
 
-    lv_obj_t * title = lv_label_create(screen_splash);
-    lv_label_set_text(title, "Smart Fridge");
-    lv_obj_add_style(title, &style_text_title, 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -20);
+    lv_obj_t *icon = lv_label_create(screen_splash);
+    lv_label_set_text(icon, ICON_CAMERA);  // Placeholder fridge/camera icon
+    lv_obj_set_style_text_font(icon, font_icon_36, 0);
+    lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -60);
 
-    lv_obj_t * loading = lv_label_create(screen_splash);
-    lv_label_set_text(loading, "Loading...");
-    lv_obj_add_style(loading, &style_text_sub, 0);
-    lv_obj_align(loading, LV_ALIGN_CENTER, 0, 20);
+    lv_obj_t *title = lv_label_create(screen_splash);
+    lv_label_set_text(title, "小鲜智能冰箱");
+    lv_obj_set_style_text_font(title, font_cn_36, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *subtitle = lv_label_create(screen_splash);
+    lv_label_set_text(subtitle, "Smart Fridge");
+    lv_obj_set_style_text_font(subtitle, font_cn_18, 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(subtitle, LV_OPA_80, 0);
+    lv_obj_align(subtitle, LV_ALIGN_CENTER, 0, 45);
+
+    lv_obj_t *bar = lv_bar_create(screen_splash);
+    lv_obj_set_size(bar, 280, 8);
+    lv_obj_align(bar, LV_ALIGN_CENTER, 0, 95);
+    lv_obj_set_style_bg_color(bar, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_30, 0);
+    lv_obj_set_style_radius(bar, THEME_RADIUS_PILL, 0);
+    lv_bar_set_value(bar, 60, LV_ANIM_OFF);
 }
 
 void gui_app_init(void) {
@@ -254,11 +168,8 @@ void gui_app_refresh_inventory(void) {
 void gui_app_set_wifi_status(bool connected) {
     if (wifi_icon_ptr) {
         if (lvgl_port_lock(0)) {
-            if (connected) {
-                lv_obj_set_style_text_color(wifi_icon_ptr, COLOR_PRIMARY, 0);
-            } else {
-                lv_obj_set_style_text_color(wifi_icon_ptr, COLOR_TEXT_SUB, 0);
-            }
+            lv_label_set_text(wifi_icon_ptr, LV_SYMBOL_WIFI);
+            lv_obj_set_style_text_color(wifi_icon_ptr, connected ? THEME_PRIMARY : THEME_TEXT_SUB, 0);
             lvgl_port_unlock();
         }
     }

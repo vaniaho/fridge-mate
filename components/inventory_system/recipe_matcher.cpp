@@ -325,6 +325,7 @@ bool recipe_init() {
 }
 
 std::vector<RecipeMatch> recipe_match_available() {
+    // 先快照库存，避免在持有 recipe_mutex 时再去获取 inventory_mutex，防止 AB-BA 死锁
     auto inventory = get_all_ingredients();
     std::vector<RecipeMatch> results;
 
@@ -342,6 +343,7 @@ std::vector<RecipeMatch> recipe_match_available() {
 }
 
 std::vector<RecipeMatch> recipe_match_near(int max_missing) {
+    // 先快照库存，确保全局锁顺序为 inventory -> recipe，避免与 prompt_builder 等形成死锁
     auto inventory = get_all_ingredients();
     std::vector<RecipeMatch> results;
 

@@ -1,10 +1,14 @@
 #include "lvgl.h"
 #include "gui_app.h"
 #include "gui_styles.h"
+#include "gui_theme.h"
+#include "gui_components.h"
+#include "gui_icons.h"
 #include "system_manager.hpp"
 #include "notes_board.hpp"
 #include "weather.hpp"
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <vector>
 #include <set>
@@ -13,10 +17,12 @@ using namespace smart_fridge::system;
 extern lv_obj_t * wifi_icon_ptr;
 
 static lv_obj_t * time_label_ptr = NULL;
+static lv_obj_t * date_label_ptr = NULL;
 
 // 桌面天气卡片 / 留言板控件指针（供后台数据刷新使用）
 static lv_obj_t * weather_temp_ptr = NULL;
 static lv_obj_t * weather_desc_ptr = NULL;
+static lv_obj_t * weather_icon_ptr = NULL;
 
 // 留言板容器 (msg_card 是外层白色卡片, msg_list 是可滚动的内部列表)
 static lv_obj_t * msg_card = NULL;
@@ -38,15 +44,30 @@ static void clock_timer_cb(lv_timer_t * timer) {
     struct tm timeinfo;
     time(&now);
     localtime_r(&now, &timeinfo);
-    
+
     // Default system time if not synced is 1970, don't show invalid time
     if (timeinfo.tm_year < (2020 - 1900)) {
         lv_label_set_text(time_label_ptr, "--:--");
+        if (date_label_ptr) lv_label_set_text(date_label_ptr, "");
     } else {
         char buf[16];
         strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
         lv_label_set_text(time_label_ptr, buf);
+        if (date_label_ptr) {
+            strftime(buf, sizeof(buf), "%m月%d日", &timeinfo);
+            lv_label_set_text(date_label_ptr, buf);
+        }
     }
+}
+
+static const char* weather_icon_for(const char* text) {
+    if (!text) return ICON_SUNNY;
+    if (strstr(text, "雷") || strstr(text, "暴雨")) return ICON_STORM;
+    if (strstr(text, "雨")) return ICON_RAIN;
+    if (strstr(text, "雪")) return ICON_SNOW;
+    if (strstr(text, "雾") || strstr(text, "霾")) return ICON_FOG;
+    if (strstr(text, "云") || strstr(text, "阴")) return ICON_CLOUDY;
+    return ICON_SUNNY;
 }
 
 static void app_btn_event_cb(lv_event_t * e) {
@@ -80,183 +101,232 @@ static void note_item_click_cb(lv_event_t * e) {
 
 void gui_launcher_init(lv_obj_t* parent) {
     // ------------------------------------------------------------------------
-    // 1. Top Status Bar (50px height)
+    // 1. Top Status Bar (60px height, clean white)
     // ------------------------------------------------------------------------
-    lv_obj_t * status_bar = lv_obj_create(parent);
-    lv_obj_set_size(status_bar, LV_PCT(100), 50);
+    // Status bar: use absolute alignment so the right-side items cannot be
+    // pushed out of bounds by the left-side label.
+    lv_obj_t *status_bar = lv_obj_create(parent);
+    lv_obj_set_size(status_bar, LV_PCT(100), 72);
     lv_obj_align(status_bar, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(status_bar, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(status_bar, THEME_SURFACE, 0);
     lv_obj_set_style_border_width(status_bar, 0, 0);
     lv_obj_set_style_radius(status_bar, 0, 0);
+    lv_obj_set_style_pad_all(status_bar, 0, 0);
     lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Bottom border for status bar
-    lv_obj_set_style_border_width(status_bar, 1, 0);
-    lv_obj_set_style_border_side(status_bar, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_color(status_bar, COLOR_DIVIDER, 0);
-
-    lv_obj_t * device_name = lv_label_create(status_bar);
+    lv_obj_t *device_name = lv_label_create(status_bar);
     lv_label_set_text(device_name, "小鲜智能冰箱");
-    lv_obj_add_style(device_name, &style_text_main, 0);
-    lv_obj_align(device_name, LV_ALIGN_LEFT_MID, 20, 0);
+    lv_obj_set_style_text_font(device_name, font_cn_24, 0);
+    lv_obj_set_style_text_color(device_name, THEME_TEXT_MAIN, 0);
+    lv_obj_align(device_name, LV_ALIGN_LEFT_MID, THEME_SPACE_L, 0);
 
-    time_label_ptr = lv_label_create(status_bar);
+    lv_obj_t *right_group = lv_obj_create(status_bar);
+    lv_obj_set_size(right_group, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(right_group, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(right_group, 0, 0);
+    lv_obj_set_style_pad_all(right_group, 0, 0);
+    lv_obj_set_flex_flow(right_group, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(right_group, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(right_group, 16, 0);
+    lv_obj_clear_flag(right_group, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(right_group, LV_ALIGN_RIGHT_MID, -THEME_SPACE_L, 0);
+
+    // Built-in LVGL Wi-Fi symbol (reliable, included in Montserrat 24)
+    wifi_icon_ptr = lv_label_create(right_group);
+    lv_label_set_text(wifi_icon_ptr, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(wifi_icon_ptr, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(wifi_icon_ptr,
+        SystemManager::get_wifi_status() == WifiStatus::CONNECTED ? THEME_PRIMARY : THEME_TEXT_SUB, 0);
+
+    lv_obj_t *time_group = lv_obj_create(right_group);
+    lv_obj_set_size(time_group, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(time_group, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(time_group, 0, 0);
+    lv_obj_set_style_pad_top(time_group, 6, 0);
+    lv_obj_set_style_pad_bottom(time_group, 6, 0);
+    lv_obj_set_flex_flow(time_group, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(time_group, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(time_group, LV_OBJ_FLAG_SCROLLABLE);
+
+    time_label_ptr = lv_label_create(time_group);
     lv_label_set_text(time_label_ptr, "--:--");
-    lv_obj_add_style(time_label_ptr, &style_text_main, 0);
-    lv_obj_align(time_label_ptr, LV_ALIGN_RIGHT_MID, -20, 0);
+    lv_obj_set_style_text_font(time_label_ptr, font_cn_24, 0);
+    lv_obj_set_style_text_color(time_label_ptr, THEME_TEXT_MAIN, 0);
 
-    lv_obj_t * wifi_icon = lv_label_create(status_bar);
-    lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_18, 0);
-    lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
-    lv_obj_add_style(wifi_icon, &style_text_sub, 0);
-    lv_obj_align(wifi_icon, LV_ALIGN_RIGHT_MID, -80, 0);
-
-    wifi_icon_ptr = wifi_icon;
-    gui_app_set_wifi_status(SystemManager::get_wifi_status() == WifiStatus::CONNECTED);
+    date_label_ptr = lv_label_create(time_group);
+    lv_label_set_text(date_label_ptr, "");
+    lv_obj_set_style_text_font(date_label_ptr, font_cn_16, 0);
+    lv_obj_set_style_text_color(date_label_ptr, THEME_TEXT_SUB, 0);
 
     // Create timer for clock update (every 1 second)
     lv_timer_create(clock_timer_cb, 1000, NULL);
 
     // ------------------------------------------------------------------------
-    // 2. Left Column: Core Info Area (~320px)
+    // 2. Left Column: Weather + Message Board
     // ------------------------------------------------------------------------
-    lv_obj_t * left_col = lv_obj_create(parent);
-    lv_obj_set_size(left_col, 320, 440); // Total height minus top bar (50) and bottom banner (80+margins)
-    lv_obj_align(left_col, LV_ALIGN_TOP_LEFT, 20, 60);
+    lv_obj_t *left_col = lv_obj_create(parent);
+    lv_obj_set_size(left_col, 320, 440);
+    lv_obj_align(left_col, LV_ALIGN_TOP_LEFT, THEME_SPACE_L, 78);
     lv_obj_set_style_bg_opa(left_col, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(left_col, 0, 0);
     lv_obj_set_style_pad_all(left_col, 0, 0);
 
-    // Weather widget
-    lv_obj_t * weather_card = lv_obj_create(left_col);
-    lv_obj_set_size(weather_card, LV_PCT(100), 120);
-    lv_obj_add_style(weather_card, &style_card, 0);
-    
-    lv_obj_t * weather_temp = lv_label_create(weather_card);
-    lv_label_set_text(weather_temp, "--°");
-    lv_obj_add_style(weather_temp, &style_text_title, 0);
-    lv_obj_set_style_text_font(weather_temp, font_cn_36, 0);
-    lv_obj_align(weather_temp, LV_ALIGN_TOP_LEFT, 10, 10);
-    weather_temp_ptr = weather_temp;
+    // Weather card
+    lv_obj_t *weather_card = gui_card_create(left_col);
+    lv_obj_set_size(weather_card, LV_PCT(100), 140);
+    lv_obj_align(weather_card, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_pad_all(weather_card, THEME_SPACE_M, 0);
+    lv_obj_set_flex_flow(weather_card, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(weather_card, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t * weather_desc = lv_label_create(weather_card);
-    lv_label_set_text(weather_desc, "-- · --");
-    lv_obj_add_style(weather_desc, &style_text_sub, 0);
-    lv_obj_align(weather_desc, LV_ALIGN_BOTTOM_LEFT, 10, -10);
-    weather_desc_ptr = weather_desc;
+    lv_obj_t *weather_text_col = lv_obj_create(weather_card);
+    lv_obj_set_size(weather_text_col, LV_SIZE_CONTENT, LV_PCT(100));
+    lv_obj_set_style_bg_opa(weather_text_col, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(weather_text_col, 0, 0);
+    lv_obj_set_flex_flow(weather_text_col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(weather_text_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_clear_flag(weather_text_col, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ================================================================
-    //  Message Board widget (留言板) — 支持逐条渲染 + 新留言高亮
-    // ================================================================
-    msg_card = lv_obj_create(left_col);
-    lv_obj_set_size(msg_card, LV_PCT(100), 200);
-    lv_obj_align(msg_card, LV_ALIGN_TOP_LEFT, 0, 140);
-    lv_obj_add_style(msg_card, &style_card, 0);
+    weather_temp_ptr = lv_label_create(weather_text_col);
+    lv_label_set_text(weather_temp_ptr, "--°");
+    lv_obj_set_style_text_font(weather_temp_ptr, font_cn_36, 0);
+    lv_obj_set_style_text_color(weather_temp_ptr, THEME_TEXT_MAIN, 0);
+
+    weather_desc_ptr = lv_label_create(weather_text_col);
+    lv_label_set_text(weather_desc_ptr, "-- · --");
+    lv_obj_set_style_text_font(weather_desc_ptr, font_cn_16, 0);
+    lv_obj_set_style_text_color(weather_desc_ptr, THEME_TEXT_SUB, 0);
+
+    weather_icon_ptr = lv_label_create(weather_card);
+    lv_label_set_text(weather_icon_ptr, ICON_SUNNY);
+    lv_obj_set_style_text_font(weather_icon_ptr, font_icon_36, 0);
+    lv_obj_set_style_text_color(weather_icon_ptr, THEME_WARNING, 0);
+
+    // Message board card
+    msg_card = gui_card_create(left_col);
+    lv_obj_set_size(msg_card, LV_PCT(100), 280);
+    lv_obj_align(msg_card, LV_ALIGN_TOP_LEFT, 0, 160);
+    lv_obj_set_style_pad_all(msg_card, THEME_SPACE_M, 0);
+    lv_obj_set_flex_flow(msg_card, LV_FLEX_FLOW_COLUMN);
     lv_obj_clear_flag(msg_card, LV_OBJ_FLAG_SCROLLABLE);
-    // 点击空白区域 → 刷新
-    lv_obj_add_flag(msg_card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(msg_card, msg_card_click_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t * msg_title = lv_label_create(msg_card);
+    lv_obj_t *msg_title_row = lv_obj_create(msg_card);
+    lv_obj_set_width(msg_title_row, LV_PCT(100));
+    lv_obj_set_height(msg_title_row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(msg_title_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(msg_title_row, 0, 0);
+    lv_obj_set_flex_flow(msg_title_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(msg_title_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(msg_title_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *msg_title = lv_label_create(msg_title_row);
     lv_label_set_text(msg_title, "留言板");
-    lv_obj_add_style(msg_title, &style_text_main, 0);
-    lv_obj_align(msg_title, LV_ALIGN_TOP_LEFT, 10, 5);
+    lv_obj_set_style_text_font(msg_title, font_cn_24, 0);
+    lv_obj_set_style_text_color(msg_title, THEME_TEXT_MAIN, 0);
 
-    // 留言列表容器（可滚动，位于标题下方）
+    lv_obj_t *msg_refresh = lv_label_create(msg_title_row);
+    lv_label_set_text(msg_refresh, ICON_NOTIFICATION);
+    lv_obj_set_style_text_font(msg_refresh, font_icon_24, 0);
+    lv_obj_set_style_text_color(msg_refresh, THEME_PRIMARY, 0);
+
     msg_list = lv_obj_create(msg_card);
-    lv_obj_set_size(msg_list, LV_PCT(100) - 10, 160);
-    lv_obj_align(msg_list, LV_ALIGN_TOP_LEFT, 5, 35);
+    lv_obj_set_width(msg_list, LV_PCT(100));
+    lv_obj_set_flex_grow(msg_list, 1);
     lv_obj_set_style_bg_opa(msg_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(msg_list, 0, 0);
     lv_obj_set_style_pad_all(msg_list, 0, 0);
-    lv_obj_set_style_pad_row(msg_list, 6, 0);
+    lv_obj_set_style_pad_row(msg_list, THEME_SPACE_S, 0);
     lv_obj_set_flex_flow(msg_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollbar_mode(msg_list, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_scroll_dir(msg_list, LV_DIR_VER);
 
+    // Click empty area to refresh
+    lv_obj_add_flag(msg_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(msg_card, msg_card_click_cb, LV_EVENT_CLICKED, NULL);
+
     // ------------------------------------------------------------------------
-    // 3. Right Column: App Grid (~640px)
+    // 3. Right Column: App Grid
     // ------------------------------------------------------------------------
-    lv_obj_t * grid = lv_obj_create(parent);
-    lv_obj_set_size(grid, 640, 360);
-    lv_obj_align(grid, LV_ALIGN_TOP_RIGHT, -20, 60);
+    lv_obj_t *grid = lv_obj_create(parent);
+    lv_obj_set_size(grid, 640, 380);
+    lv_obj_align(grid, LV_ALIGN_TOP_RIGHT, -THEME_SPACE_L, 78);
     lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(grid, 0, 0);
-    
-    // Grid Layout (4 columns x 2 rows)
-    static lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    static lv_coord_t row_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    lv_obj_set_style_grid_column_dsc_array(grid, col_dsc, 0);
-    lv_obj_set_style_grid_row_dsc_array(grid, row_dsc, 0);
-    lv_obj_set_layout(grid, LV_LAYOUT_GRID);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(grid, THEME_SPACE_L, 0);
+    lv_obj_set_style_pad_row(grid, THEME_SPACE_L, 0);
 
     struct AppItem {
         const char *icon;
         const char *name;
         gui_app_id_t id;
+        lv_color_t grad_start;
+        lv_color_t grad_end;
     };
 
     AppItem apps[] = {
-        {LV_SYMBOL_LIST, "库存管理", GUI_APP_INVENTORY},
-        {LV_SYMBOL_FILE, "我的食谱", GUI_APP_RECIPES},
-        {LV_SYMBOL_SETTINGS, "系统设置", GUI_APP_SETTINGS},
-        {LV_SYMBOL_AUDIO, "语音助手", GUI_APP_VOICE_ASSIST},
-        {LV_SYMBOL_EDIT, "购物清单", GUI_APP_SHOPPING}
+        {ICON_INVENTORY, "库存管理", GUI_APP_INVENTORY, lv_color_hex(0x4A90E2), lv_color_hex(0x357ABD)},
+        {ICON_RECIPES,   "我的食谱", GUI_APP_RECIPES,   lv_color_hex(0xFF9800), lv_color_hex(0xF57C00)},
+        {ICON_VOICE,     "语音助手", GUI_APP_VOICE_ASSIST, lv_color_hex(0x9C27B0), lv_color_hex(0x7B1FA2)},
+        {ICON_SHOPPING,  "购物清单", GUI_APP_SHOPPING,  lv_color_hex(0x2ECC71), lv_color_hex(0x27AE60)},
+        {ICON_SETTINGS,  "系统设置", GUI_APP_SETTINGS,  lv_color_hex(0x607D8B), lv_color_hex(0x455A64)},
     };
 
     int num_apps = sizeof(apps) / sizeof(apps[0]);
-
-    for(int i = 0; i < num_apps; i++) {
-        int col = i % 4;
-        int row = i / 4;
-
-        lv_obj_t * btn = lv_btn_create(grid);
-        lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1,
-                                  LV_GRID_ALIGN_STRETCH, row, 1);
-        lv_obj_add_style(btn, &style_card, 0);
-        lv_obj_add_event_cb(btn, app_btn_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)apps[i].id);
-
-        lv_obj_t * icon = lv_label_create(btn);
-        lv_label_set_text(icon, apps[i].icon);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_24, 0);
-        lv_obj_set_style_text_color(icon, COLOR_TEXT_MAIN, 0);
-        lv_obj_align(icon, LV_ALIGN_CENTER, 0, -15);
-
-        lv_obj_t * label = lv_label_create(btn);
-        lv_label_set_text(label, apps[i].name);
-        lv_obj_set_style_text_color(label, COLOR_TEXT_MAIN, 0);
-        lv_obj_set_style_text_font(label, font_cn_18, 0);
-        lv_obj_align(label, LV_ALIGN_CENTER, 0, 25);
+    for (int i = 0; i < num_apps; i++) {
+        gui_icon_button_create(grid, apps[i].icon, apps[i].name,
+                               apps[i].grad_start, apps[i].grad_end,
+                               app_btn_event_cb, (void*)(intptr_t)apps[i].id);
     }
 
     // ------------------------------------------------------------------------
     // 4. Bottom Full-width Action Banner (Camera Access)
     // ------------------------------------------------------------------------
-    lv_obj_t * banner_btn = lv_btn_create(parent);
-    lv_obj_set_size(banner_btn, LV_PCT(100) - 40, 80); // Width: 100% minus padding
-    lv_obj_align(banner_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(banner_btn, COLOR_PRIMARY, 0);
-    lv_obj_set_style_radius(banner_btn, 12, 0);
+    // Banner aligns with the right-side app grid (width 640, right margin 24)
+    lv_obj_t *banner_btn = lv_btn_create(parent);
+    lv_obj_set_size(banner_btn, 640, 84);
+    lv_obj_align(banner_btn, LV_ALIGN_BOTTOM_RIGHT, -THEME_SPACE_L, -THEME_SPACE_L);
+    theme_apply_gradient_bg(banner_btn, THEME_PRIMARY, THEME_ACCENT);
+    lv_obj_set_style_radius(banner_btn, THEME_RADIUS_M, 0);
+    lv_obj_set_style_border_width(banner_btn, 0, 0);
+    lv_obj_set_style_shadow_width(banner_btn, 8, 0);
+    lv_obj_set_style_shadow_ofs_y(banner_btn, 3, 0);
+    lv_obj_set_style_shadow_opa(banner_btn, LV_OPA_20, 0);
+    lv_obj_set_style_pad_left(banner_btn, THEME_SPACE_L, 0);
+    lv_obj_set_style_pad_right(banner_btn, THEME_SPACE_L, 0);
+    lv_obj_set_flex_flow(banner_btn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(banner_btn, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(banner_btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(banner_btn, camera_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    theme_apply_press_effect(banner_btn);
 
-    lv_obj_t * banner_icon = lv_label_create(banner_btn);
-    lv_label_set_text(banner_icon, LV_SYMBOL_IMAGE);
-    lv_obj_set_style_text_font(banner_icon, &lv_font_montserrat_24, 0);
+    lv_obj_t *banner_left = lv_obj_create(banner_btn);
+    lv_obj_set_size(banner_left, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(banner_left, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(banner_left, 0, 0);
+    lv_obj_set_flex_flow(banner_left, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(banner_left, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(banner_left, THEME_SPACE_M, 0);
+    lv_obj_clear_flag(banner_left, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *banner_icon = lv_label_create(banner_left);
+    lv_label_set_text(banner_icon, ICON_CAMERA);
+    lv_obj_set_style_text_font(banner_icon, font_icon_36, 0);
     lv_obj_set_style_text_color(banner_icon, lv_color_white(), 0);
-    lv_obj_align(banner_icon, LV_ALIGN_LEFT_MID, 20, 0);
 
-    lv_obj_t * banner_title = lv_label_create(banner_btn);
+    lv_obj_t *banner_title = lv_label_create(banner_left);
     lv_label_set_text(banner_title, "拍照存取");
     lv_obj_set_style_text_font(banner_title, font_cn_24, 0);
     lv_obj_set_style_text_color(banner_title, lv_color_white(), 0);
-    lv_obj_align(banner_title, LV_ALIGN_LEFT_MID, 60, 0);
 
-    lv_obj_t * banner_desc = lv_label_create(banner_btn);
+    lv_obj_t *banner_desc = lv_label_create(banner_btn);
     lv_label_set_text(banner_desc, "对准食材拍照，自动识别并存入");
     lv_obj_set_style_text_font(banner_desc, font_cn_16, 0);
     lv_obj_set_style_text_color(banner_desc, lv_color_white(), 0);
     lv_obj_set_style_text_opa(banner_desc, LV_OPA_80, 0);
-    lv_obj_align(banner_desc, LV_ALIGN_RIGHT_MID, -30, 0);
+
+    // No entrance animation to keep Launcher snappy
 }
 
 // ============================================================
@@ -275,6 +345,18 @@ void gui_launcher_update_weather(float temp, const char* city, const char* text)
         const char* t = (text && text[0]) ? text : "--";
         snprintf(buf, sizeof(buf), "%s · %s", c, t);
         lv_label_set_text(weather_desc_ptr, buf);
+    }
+    if (weather_icon_ptr) {
+        lv_label_set_text(weather_icon_ptr, weather_icon_for(text));
+        // Tint icon by weather type for quick visual recognition
+        lv_color_t icon_color = THEME_WARNING; // sunny default
+        if (text) {
+            if (strstr(text, "雨")) icon_color = THEME_PRIMARY;
+            else if (strstr(text, "雪") || strstr(text, "雾") || strstr(text, "霾")) icon_color = THEME_TEXT_SUB;
+            else if (strstr(text, "雷") || strstr(text, "暴雨")) icon_color = THEME_DANGER;
+            else if (strstr(text, "云") || strstr(text, "阴")) icon_color = THEME_TEXT_SUB;
+        }
+        lv_obj_set_style_text_color(weather_icon_ptr, icon_color, 0);
     }
 }
 

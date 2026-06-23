@@ -98,7 +98,8 @@ void SystemManager::wifi_event_handler(void* arg, esp_event_base_t event_base, i
 }
 
 void SystemManager::init() {
-    wifi_manager_disable_retry(); // Disable the boot wifi helper retry callbacks
+    wifi_manager_disable_retry();      // 禁用 boot 阶段的重试逻辑
+    wifi_manager_unregister_handlers(); // 注销 boot 阶段的事件 handler，避免与 SystemManager 重复处理
     load_settings();
 
     // Ensure core network and event loop are initialized

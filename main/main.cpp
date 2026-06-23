@@ -236,12 +236,11 @@ extern "C" void app_main(void) {
     const char *wifi_pass = credentials_get_wifi_pass();
 
     ESP_LOGI(TAG, "[Phase 3] 初始化 WiFi 驱动...");
-    wifi_init_sta(wifi_ssid, wifi_pass);
+    s_network_ok = wifi_init_sta(wifi_ssid, wifi_pass);
 
     if (strlen(wifi_ssid) == 0) {
         ESP_LOGW(TAG, "  WiFi 凭证未配置，保持离线模式，可进入设置界面进行扫描配置");
-    } else {
-        s_network_ok = true;
+    } else if (s_network_ok) {
         ESP_LOGI(TAG, "  WiFi 已连接");
 
         // NTP 时间同步（保质期倒计时依赖准确时间）
@@ -252,6 +251,8 @@ extern "C" void app_main(void) {
         } else {
             ESP_LOGW(TAG, "  NTP 同步超时，将在后台持续重试");
         }
+    } else {
+        ESP_LOGE(TAG, "  WiFi 连接失败，进入离线模式");
     }
 
     // --------------------------------------------------------

@@ -1,6 +1,9 @@
 #include "lvgl.h"
 #include "gui_app.h"
 #include "gui_styles.h"
+#include "gui_theme.h"
+#include "gui_components.h"
+#include "gui_icons.h"
 #include "inventory.hpp"
 #include <time.h>
 #include <stdio.h>
@@ -126,10 +129,10 @@ static void create_ingredient_detail_popup(const std::string& name) {
     lv_obj_t * close_btn = lv_btn_create(popup);
     lv_obj_set_size(close_btn, 40, 40);
     lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -10, 10);
-    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_set_style_bg_color(close_btn, THEME_DIVIDER, 0);
     lv_obj_t * close_lbl = lv_label_create(close_btn);
-    lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
-    lv_obj_set_style_text_font(close_lbl, &lv_font_montserrat_18, 0);
+    lv_label_set_text(close_lbl, ICON_CLOSE);
+    lv_obj_set_style_text_font(close_lbl, font_icon_24, 0);
     lv_obj_center(close_lbl);
     lv_obj_add_event_cb(close_btn, btn_close_popup_cb, LV_EVENT_CLICKED, popup_bg);
 
@@ -152,7 +155,7 @@ static void create_ingredient_detail_popup(const std::string& name) {
         lv_obj_t * item = lv_obj_create(batch_list);
         lv_obj_set_size(item, LV_PCT(100), 50);
         lv_obj_set_style_border_width(item, 1, 0);
-        lv_obj_set_style_border_color(item, lv_color_hex(0xEEEEEE), 0);
+        lv_obj_set_style_border_color(item, THEME_DIVIDER, 0);
         lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
         
         lv_obj_t * batch_lbl = lv_label_create(item);
@@ -161,8 +164,8 @@ static void create_ingredient_detail_popup(const std::string& name) {
         lv_obj_set_style_text_font(batch_lbl, font_cn_16, 0);
         lv_obj_align(batch_lbl, LV_ALIGN_LEFT_MID, 10, 0);
 
-        if (remaining < 0) lv_obj_set_style_text_color(batch_lbl, COLOR_DANGER, 0);
-        else if (remaining <= 3.0) lv_obj_set_style_text_color(batch_lbl, COLOR_WARNING, 0);
+        if (remaining < 0) lv_obj_set_style_text_color(batch_lbl, THEME_DANGER, 0);
+        else if (remaining <= 3.0) lv_obj_set_style_text_color(batch_lbl, THEME_WARNING, 0);
     }
 
     if (p_item->batches.empty()) {
@@ -176,7 +179,7 @@ static void create_ingredient_detail_popup(const std::string& name) {
     lv_obj_t * btn_take = lv_btn_create(popup);
     lv_obj_set_size(btn_take, 140, 40);
     lv_obj_align(btn_take, LV_ALIGN_BOTTOM_LEFT, 20, -20);
-    lv_obj_set_style_bg_color(btn_take, COLOR_DANGER, 0);
+    lv_obj_set_style_bg_color(btn_take, THEME_DANGER, 0);
     lv_obj_t * lbl_take = lv_label_create(btn_take);
     lv_label_set_text(lbl_take, "全部取出");
     lv_obj_set_style_text_font(lbl_take, font_cn_18, 0);
@@ -247,11 +250,12 @@ static void render_inventory_items(int filter_mode) {
         lv_obj_t * card = lv_obj_create(content_area);
         lv_obj_set_size(card, 240, 160);
         lv_obj_add_style(card, &style_card, 0);
+        lv_obj_set_style_pad_all(card, 12, 0);
         lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_ALL, strdup(item.name.c_str()));
 
         if (filter_mode == 1 || remaining <= 3.0) {
             lv_obj_set_style_border_width(card, 2, 0);
-            lv_obj_set_style_border_color(card, remaining < 0 ? COLOR_DANGER : COLOR_WARNING, 0);
+            lv_obj_set_style_border_color(card, remaining < 0 ? THEME_DANGER : THEME_WARNING, 0);
         }
 
         // Title
@@ -263,7 +267,7 @@ static void render_inventory_items(int filter_mode) {
         // Category Tag
         lv_obj_t * cat_tag = lv_label_create(card);
         lv_label_set_text(cat_tag, item.category.c_str());
-        lv_obj_set_style_bg_color(cat_tag, COLOR_PRIMARY, 0);
+        lv_obj_set_style_bg_color(cat_tag, THEME_PRIMARY, 0);
         lv_obj_set_style_text_color(cat_tag, lv_color_white(), 0);
         lv_obj_set_style_radius(cat_tag, 8, 0);
         lv_obj_set_style_pad_all(cat_tag, 4, 0);
@@ -280,13 +284,13 @@ static void render_inventory_items(int filter_mode) {
         lv_obj_t * suggestion = lv_label_create(card);
         if (remaining < 0) {
             lv_label_set_text(suggestion, "尽快食用！");
-            lv_obj_set_style_text_color(suggestion, COLOR_DANGER, 0);
+            lv_obj_set_style_text_color(suggestion, THEME_DANGER, 0);
         } else if (remaining <= 3.0) {
             lv_label_set_text_fmt(suggestion, "建议 %d 天内食用", (int)remaining);
-            lv_obj_set_style_text_color(suggestion, COLOR_WARNING, 0);
+            lv_obj_set_style_text_color(suggestion, THEME_WARNING, 0);
         } else {
             lv_label_set_text_fmt(suggestion, "建议 %d 天内食用", (int)remaining);
-            lv_obj_set_style_text_color(suggestion, COLOR_SUCCESS, 0);
+            lv_obj_set_style_text_color(suggestion, THEME_SUCCESS, 0);
         }
         lv_obj_set_style_text_font(suggestion, font_cn_16, 0);
         lv_obj_align(suggestion, LV_ALIGN_BOTTOM_LEFT, 0, 0);
@@ -295,35 +299,35 @@ static void render_inventory_items(int filter_mode) {
         lv_obj_t * btn_minus = lv_btn_create(card);
         lv_obj_set_size(btn_minus, 32, 32);
         lv_obj_align(btn_minus, LV_ALIGN_BOTTOM_RIGHT, -40, 0);
-        lv_obj_set_style_bg_color(btn_minus, lv_color_hex(0xF0F0F0), 0);
-        lv_obj_set_style_text_color(btn_minus, COLOR_TEXT_MAIN, 0);
+        lv_obj_set_style_bg_color(btn_minus, THEME_BG, 0);
+        lv_obj_set_style_text_color(btn_minus, THEME_TEXT_MAIN, 0);
         lv_obj_set_style_radius(btn_minus, 16, 0);
         lv_obj_set_style_pad_all(btn_minus, 0, 0);
         lv_obj_t * lbl_minus = lv_label_create(btn_minus);
-        lv_label_set_text(lbl_minus, LV_SYMBOL_MINUS);
-        lv_obj_set_style_text_font(lbl_minus, &lv_font_montserrat_18, 0);
+        lv_label_set_text(lbl_minus, ICON_REMOVE);
+        lv_obj_set_style_text_font(lbl_minus, font_icon_24, 0);
         lv_obj_center(lbl_minus);
         lv_obj_add_event_cb(btn_minus, btn_sub_cb, LV_EVENT_ALL, strdup(item.name.c_str()));
 
         lv_obj_t * btn_plus = lv_btn_create(card);
         lv_obj_set_size(btn_plus, 32, 32);
         lv_obj_align(btn_plus, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-        lv_obj_set_style_bg_color(btn_plus, COLOR_PRIMARY, 0);
+        lv_obj_set_style_bg_color(btn_plus, THEME_PRIMARY, 0);
         lv_obj_set_style_text_color(btn_plus, lv_color_white(), 0);
         lv_obj_set_style_radius(btn_plus, 16, 0);
         lv_obj_set_style_pad_all(btn_plus, 0, 0);
         lv_obj_t * lbl_plus = lv_label_create(btn_plus);
-        lv_label_set_text(lbl_plus, LV_SYMBOL_PLUS);
-        lv_obj_set_style_text_font(lbl_plus, &lv_font_montserrat_18, 0);
+        lv_label_set_text(lbl_plus, ICON_ADD);
+        lv_obj_set_style_text_font(lbl_plus, font_icon_24, 0);
         lv_obj_center(lbl_plus);
         lv_obj_add_event_cb(btn_plus, btn_add_cb, LV_EVENT_ALL, strdup(item.name.c_str()));
     }
 
     if (count == 0) {
-        lv_obj_t * empty_label = lv_label_create(content_area);
-        lv_label_set_text(empty_label, filter_mode == 1 ? "所有食材都很新鲜！" : "没有找到食材。");
-        lv_obj_add_style(empty_label, &style_text_sub, 0);
-        lv_obj_align(empty_label, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_t * empty = gui_empty_state_create(content_area, ICON_INVENTORY,
+            filter_mode == 1 ? "所有食材都很新鲜" : "没有找到食材",
+            filter_mode == 1 ? "近期没有临期食材" : "点击拍照或语音录入食材");
+        lv_obj_align(empty, LV_ALIGN_CENTER, 0, 0);
     }
 }
 
@@ -340,18 +344,18 @@ lv_obj_t* app_inventory_create(void) {
     lv_obj_t * sidebar = lv_obj_create(screen);
     lv_obj_set_size(sidebar, 200, LV_PCT(100));
     lv_obj_align(sidebar, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_color(sidebar, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(sidebar, THEME_SURFACE, 0);
     lv_obj_set_style_border_width(sidebar, 0, 0);
     lv_obj_set_style_radius(sidebar, 0, 0);
 
     lv_obj_t * back_btn = lv_btn_create(sidebar);
     lv_obj_set_size(back_btn, LV_PCT(90), 50);
     lv_obj_align(back_btn, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0xF0F0F0), 0);
+    lv_obj_set_style_bg_color(back_btn, THEME_BG, 0);
     lv_obj_add_event_cb(back_btn, back_btn_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t * back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "← 返回桌面");
-    lv_obj_set_style_text_color(back_label, COLOR_TEXT_MAIN, 0);
+    lv_obj_set_style_text_color(back_label, THEME_TEXT_MAIN, 0);
     lv_obj_set_style_text_font(back_label, font_cn_18, 0);
     lv_obj_align(back_label, LV_ALIGN_CENTER, 0, 0);
 
@@ -373,7 +377,7 @@ lv_obj_t* app_inventory_create(void) {
             lv_obj_set_style_text_font(label, font_cn_16, 0);
             lv_obj_align(label, LV_ALIGN_LEFT_MID, 40, 0);
         } else {
-            lv_obj_set_style_text_color(label, COLOR_TEXT_MAIN, 0);
+            lv_obj_set_style_text_color(label, THEME_TEXT_MAIN, 0);
             lv_obj_set_style_text_font(label, font_cn_18, 0);
             lv_obj_align(label, LV_ALIGN_LEFT_MID, 20, 0);
         }
@@ -394,7 +398,7 @@ lv_obj_t* app_inventory_create(void) {
     lv_obj_t * bottom_bar = lv_obj_create(screen);
     lv_obj_set_size(bottom_bar, 824, 70);
     lv_obj_align(bottom_bar, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    lv_obj_set_style_bg_color(bottom_bar, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(bottom_bar, THEME_SURFACE, 0);
     lv_obj_set_style_border_width(bottom_bar, 0, 0);
     lv_obj_set_style_radius(bottom_bar, 0, 0);
     lv_obj_clear_flag(bottom_bar, LV_OBJ_FLAG_SCROLLABLE);
@@ -403,8 +407,8 @@ lv_obj_t* app_inventory_create(void) {
     lv_obj_t * cam_btn = lv_btn_create(bottom_bar);
     lv_obj_align(cam_btn, LV_ALIGN_LEFT_MID, 20, 0);
     lv_obj_t * cam_icon = lv_label_create(cam_btn);
-    lv_label_set_text(cam_icon, LV_SYMBOL_IMAGE);
-    lv_obj_set_style_text_font(cam_icon, &lv_font_montserrat_18, 0);
+    lv_label_set_text(cam_icon, ICON_CAMERA);
+    lv_obj_set_style_text_font(cam_icon, font_icon_24, 0);
     lv_obj_t * cam_lbl = lv_label_create(cam_btn);
     lv_label_set_text(cam_lbl, " 拍照录入");
     lv_obj_set_style_text_font(cam_lbl, font_cn_18, 0);
@@ -413,8 +417,8 @@ lv_obj_t* app_inventory_create(void) {
     lv_obj_t * mic_btn = lv_btn_create(bottom_bar);
     lv_obj_align(mic_btn, LV_ALIGN_LEFT_MID, 180, 0);
     lv_obj_t * mic_icon = lv_label_create(mic_btn);
-    lv_label_set_text(mic_icon, LV_SYMBOL_AUDIO);
-    lv_obj_set_style_text_font(mic_icon, &lv_font_montserrat_18, 0);
+    lv_label_set_text(mic_icon, ICON_MIC);
+    lv_obj_set_style_text_font(mic_icon, font_icon_24, 0);
     lv_obj_t * mic_lbl = lv_label_create(mic_btn);
     lv_label_set_text(mic_lbl, " 语音录入");
     lv_obj_set_style_text_font(mic_lbl, font_cn_18, 0);
@@ -422,7 +426,7 @@ lv_obj_t* app_inventory_create(void) {
 
     lv_obj_t * recipe_btn = lv_btn_create(bottom_bar);
     lv_obj_align(recipe_btn, LV_ALIGN_RIGHT_MID, -20, 0);
-    lv_obj_set_style_bg_color(recipe_btn, COLOR_PRIMARY, 0);
+    lv_obj_set_style_bg_color(recipe_btn, THEME_PRIMARY, 0);
     lv_obj_add_event_cb(recipe_btn, nav_recipes_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t * recipe_lbl = lv_label_create(recipe_btn);
     lv_label_set_text(recipe_lbl, "我的食谱 →");

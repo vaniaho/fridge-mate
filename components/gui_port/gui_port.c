@@ -26,10 +26,12 @@ void gui_port_init(void) {
     cfg.flags.sw_rotate = 1;
 
     // Initialize the LCD, touch, and LVGL timer task with custom config
-    lv_display_t *disp = bsp_display_start_with_config(&cfg);
+    lv_disp_t *disp = bsp_display_start_with_config(&cfg);
     
     // Rotate the display 180 degrees (upside down fix)
-    if (disp) {
+    if (disp && disp->driver) {
+        disp->driver->sw_rotate = 1;
+        disp->driver->drv_update_cb = NULL; // Forcefully remove hardware rotation callback
         lv_disp_set_rotation(disp, LV_DISP_ROT_180);
     }
     

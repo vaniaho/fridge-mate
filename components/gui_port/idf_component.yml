@@ -1,4 +1,10 @@
 dependencies:
   lvgl/lvgl: "^8.3.11"
-  waveshare/esp32_p4_wifi6_touch_lcd_7b: "^1.0.0"
-  espressif/esp_lvgl_port: "^2.0.0"
+  # Use local forks so our patches (duplicate LEDC init fix and removal of
+  # hardware swap_xy) are not overwritten by the component manager.
+  waveshare/esp32_p4_wifi6_touch_lcd_7b:
+    version: "^1.0.0"
+    override_path: ../waveshare__esp32_p4_wifi6_touch_lcd_7b
+  espressif/esp_lvgl_port:
+    version: "^2.0.0"
+    override_path: ../espressif__esp_lvgl_port

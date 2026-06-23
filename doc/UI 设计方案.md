@@ -187,7 +187,7 @@
 | -- | ---- | ------------------- | ------ |
 | ≡ (List) | 库存管理 | 进入库存应用（查看/管理食材）     | 基础版已实现 |
 | 🖼️ (Img) | 智能食谱 | 进入食谱推荐应用（匹配当前库存）    | 基础版已实现 |
-| ⚙️ (Set) | 系统设置 | 进入设置页面              | 待实现 |
+| ⚙️ (Set) | 系统设置 | 进入设置页面              | 已实现（WiFi/显示/声音/设备信息/关于） |
 | 🎙️ (Mic) | 语音助手 | 激活语音对话模式，显示全屏语音交互界面 | 新增     |
 | 🛒 (Cart)| 购物清单 | 进入购物清单（根据缺货自动生成）    | 未来扩展   |
 
@@ -870,12 +870,12 @@ Launcher 桌面 → 点击"智能食谱"
 ## 8. 实施与验证计划
 
 1. **第一步（准备字库）**：将通用的 `.ttf` 字体文件（如思源黑体 NotoSansSC-Regular）拷贝至 SD 卡，项目中启用 `lv_freetype` 模块进行动态加载。
-2. **第二步（gui\_bridge 适配）**：实现 `gui_bridge.c` 中现有 8 个 Stub 函数的真实逻辑，建立 `gui_bridge` → `gui_app` 的调用链路。同时根据需要在 `gui_bridge.h` 中补充新接口：
+2. **第二步（gui\_bridge 适配）**：`gui_bridge.c` 已实现基于 `lv_async_call` 的真实桥接逻辑，建立 `gui_bridge` → `gui_app` 的调用链路。后续根据需要在 `gui_bridge.h` 中补充新接口：
    - `gui_bridge_navigate_to(app_id)` — 跳转到指定应用
    - `gui_bridge_show_camera_preview()` — 拍照预览
    - `gui_bridge_show_voice_assist()` — 全屏语音助手
    - `gui_bridge_show_standby()` / `gui_bridge_wake()` — 待机/唤醒
-3. **第三步（框架重构）**：按照上述目录结构，重构 `gui_app` 组件：
+3. **第三步（框架重构）**：按照上述目录结构，继续完善 `gui_app` 组件：
    - 实现按需加载（Lazy Loading）的屏幕管理器（Screen Stack），页面退出时严格调用 `lv_obj_delete` 释放内存。
    - 实现 Launcher 桌面（横屏左右分栏布局 + 拍照存取快捷入口）
    - 实现全局组件（Status Bar、Notification、Voice Indicator）
@@ -891,7 +891,7 @@ Launcher 桌面 → 点击"智能食谱"
    - 联调待机唤醒与 `env_sensors` 事件
 
 > \[!NOTE]
-> 当前状态：`gui_bridge.c` 中 8 个接口函数均为 Stub 实现（仅日志输出）。`esp_brookesia_phone/` 目录下有参考代码可供借鉴。尚未有 `gui_app.cpp` 文件存在。
+> 当前状态：`gui_bridge.c` 已接入真实 LVGL 派发；`gui_app.cpp` 已实现 Launcher、库存、食谱、设置、待机、通知/TTS 浮层。拍照预览、全屏语音助手、待机动态时钟、设置页日期时间 Tab 等仍需继续完善。`esp_brookesia_phone/` 目录下有参考代码可供借鉴。
 
 > \[!IMPORTANT]
 >

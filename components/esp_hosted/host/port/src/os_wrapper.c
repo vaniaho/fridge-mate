@@ -735,7 +735,20 @@ int hosted_config_gpio_as_interrupt(void* gpio_port, uint32_t gpio_num, uint32_t
 	gpio_config(&new_gpio_io_conf);
 
 	gpio_set_intr_type(gpio_num, intr_type);
-	gpio_install_isr_service(0);
+
+	/* 同一进程里 LVGL touch 等模块可能已经安装过 GPIO ISR service。
+	 * 重复安装会报错但属于可忽略状态；用静态标志避免第二次调用时再打印错误。
+	 */
+	static bool s_gpio_isr_installed = false;
+	if (!s_gpio_isr_installed) {
+		esp_err_t ret = gpio_install_isr_service(0);
+		if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE) {
+			s_gpio_isr_installed = true;
+		} else {
+			ESP_LOGE(TAG, "GPIO ISR install failed: %s", esp_err_to_name(ret));
+			return -1;
+		}
+	}
 	gpio_isr_handler_add(gpio_num, new_gpio_isr_handler, NULL);
 
 	return 0;

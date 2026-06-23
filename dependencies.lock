@@ -36,7 +36,7 @@ dependencies:
       require: private
       version: '>=4.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.5.10
   espressif/esp_lcd_ek79007:
@@ -50,7 +50,7 @@ dependencies:
       require: private
       version: '>=5.3'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32p4
@@ -76,22 +76,14 @@ dependencies:
       require: private
       version: '>=5.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.2.0~2
   espressif/esp_lvgl_port:
-    component_hash: fb6c1fdfe70d4ca39a035d63ca394a35f17ec84ce16ff98ecb13a54155d75da4
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.2'
-    - name: lvgl/lvgl
-      registry_url: https://components.espressif.com
-      require: public
-      version: '>=8,<10'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: C:\Code\ESP\smart_fridge\components\espressif__esp_lvgl_port
+      type: local
     version: 2.8.0~1
   espressif/esp_serial_slave_link:
     component_hash: ac1776806de0a6e371c84e87898bb983e19ce62aa7f1e2e5c4a3b0234a575d2c
@@ -128,8 +120,10 @@ dependencies:
     - name: lvgl/lvgl
       version: ^8.3.11
     - name: waveshare/esp32_p4_wifi6_touch_lcd_7b
+      override_path: ../waveshare__esp32_p4_wifi6_touch_lcd_7b
       version: ^1.0.0
     - name: espressif/esp_lvgl_port
+      override_path: ../espressif__esp_lvgl_port
       version: ^2.0.0
     source:
       path: C:\Code\ESP\smart_fridge\components\gui_port
@@ -146,40 +140,17 @@ dependencies:
       type: local
     version: 8.4.0
   waveshare/esp32_p4_wifi6_touch_lcd_7b:
-    component_hash: 324a9667293e657b64a58b4c726e3babe2a8934a6154e7a9d51357a58fb7da0b
-    dependencies:
-    - name: espressif/esp_codec_dev
-      registry_url: https://components.espressif.com
-      require: public
-      version: ~1.5
-    - name: espressif/esp_lcd_ek79007
-      registry_url: https://components.espressif.com
-      require: private
-      version: 1.*
-    - name: espressif/esp_lcd_touch_gt911
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^1
-    - name: espressif/esp_lvgl_port
-      registry_url: https://components.espressif.com
-      require: public
-      version: ^2
-    - name: idf
-      require: private
-      version: '>=5.3'
-    - name: lvgl/lvgl
-      registry_url: https://components.espressif.com
-      require: private
-      version: '>=8,<10'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
-    targets:
-    - esp32p4
+      path: C:\Code\ESP\smart_fridge\components\waveshare__esp32_p4_wifi6_touch_lcd_7b
+      type: local
     version: 1.0.4
 direct_dependencies:
 - espressif/eppp_link
+- espressif/esp_codec_dev
 - espressif/esp_hosted
+- espressif/esp_lcd_ek79007
+- espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_port
 - espressif/freetype
 - espressif/zlib
@@ -187,6 +158,6 @@ direct_dependencies:
 - idf
 - lvgl/lvgl
 - waveshare/esp32_p4_wifi6_touch_lcd_7b
-manifest_hash: 15985c59a90260008c35b47757f2ef9626ec0f7b8aa80a46656eebdfa31d351b
+manifest_hash: de3550df5aac2a191fb8edc925566b924bdaf409f1a9897d6a315477dc7a0822
 target: esp32p4
 version: 2.0.0

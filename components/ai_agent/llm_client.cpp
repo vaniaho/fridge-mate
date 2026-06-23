@@ -51,9 +51,9 @@ bool call_llm_api(const std::string& user_voice_text, std::string& out_reply) {
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     
-    char auth_header[256];  // 栈变量，避免 static 在多线程调用时被覆盖
-    snprintf(auth_header, sizeof(auth_header), "Bearer %s", api_key);
-    esp_http_client_set_header(client, "Authorization", auth_header);
+    // 使用 std::string 动态拼接 Authorization，避免 api_key 过长导致栈缓冲区溢出
+    std::string auth_header = "Bearer " + std::string(api_key);
+    esp_http_client_set_header(client, "Authorization", auth_header.c_str());
     esp_http_client_set_post_field(client, request_body.c_str(), request_body.length());
 
     // 4. 执行请求

@@ -186,7 +186,7 @@ std::string parse_and_execute_llm_response(const std::string& llm_json_response)
                     llm_response_payload_t* payload = (llm_response_payload_t*)malloc(sizeof(llm_response_payload_t));
                     if (payload) {
                         memset(payload, 0, sizeof(llm_response_payload_t));
-                        strncpy(payload->tts_text, tts_str.c_str(), sizeof(payload->tts_text) - 1);
+                        strncpy(payload->tts_text, tts_str.c_str(), TTS_TEXT_MAX_LEN - 1);
                         payload->ui_action_id = ui_action;
                         
                         esp_err_t err = send_system_event(EVT_LLM_RESPONSE_READY, payload, sizeof(llm_response_payload_t));

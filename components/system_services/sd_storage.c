@@ -112,6 +112,10 @@ int sd_card_init(void) {
     }
 
     ESP_LOGI(TAG, "Filesystem mounted successfully.");
+    // SPI 模式下 sdspi_transaction 会输出 SDIO 命令（cmd=52/5）"not supported" 信息，
+    // 这是 SPI 协议探测的正常行为，不影响挂载与读写。只保留 WARN 以上日志。
+    esp_log_level_set("sdspi_transaction", ESP_LOG_WARN);
+
     // 打印 SD 卡基本信息
     sdmmc_card_print_info(stdout, card);
 

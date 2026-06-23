@@ -1,6 +1,9 @@
 #include "lvgl.h"
 #include "gui_app.h"
 #include "gui_styles.h"
+#include "gui_theme.h"
+#include "gui_components.h"
+#include "gui_icons.h"
 #include "system_manager.hpp"
 #include <stdio.h>
 #include <time.h>
@@ -108,7 +111,7 @@ static void ta_event_cb(lv_event_t * e) {
     if(code == LV_EVENT_FOCUSED) {
         if(kb == NULL) {
             kb = lv_keyboard_create(lv_scr_act());
-            lv_obj_set_style_text_font(kb, &lv_font_montserrat_18, 0);
+            lv_obj_set_style_text_font(kb, font_cn_18, 0);
             lv_obj_move_foreground(kb);
         }
         lv_keyboard_set_textarea(kb, ta);
@@ -140,11 +143,19 @@ static void wifi_item_cb(lv_event_t * e) {
     for(uint32_t i=0; i<count; i++) {
         lv_obj_set_style_bg_color(lv_obj_get_child(wifi_list, i), lv_color_white(), 0);
     }
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0xE0F0FF), 0);
+    lv_obj_set_style_bg_color(btn, THEME_PRIMARY_LIGHT, 0);
     
     // Show password card when an SSID is selected
     if (pwd_card) {
         lv_obj_clear_flag(pwd_card, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void wifi_item_delete_cb(lv_event_t * e) {
+    // 按钮被销毁时释放 strdup 分配的 SSID 字符串
+    char* ssid = (char*)lv_event_get_user_data(e);
+    if (ssid) {
+        free(ssid);
     }
 }
 
@@ -153,28 +164,31 @@ static void wifi_timer_handler(lv_timer_t * timer) {
         WifiStatus s = SystemManager::get_wifi_status();
         if (s == WifiStatus::CONNECTED) {
             lv_label_set_text_fmt(wifi_status_lbl, "状态: 已连接 %s", SystemManager::get_current_ssid().c_str());
-            lv_obj_set_style_text_color(wifi_status_lbl, COLOR_SUCCESS, 0);
+            lv_obj_set_style_text_color(wifi_status_lbl, THEME_SUCCESS, 0);
         } else if (s == WifiStatus::CONNECTING) {
             lv_label_set_text(wifi_status_lbl, "状态: 连接中...");
-            lv_obj_set_style_text_color(wifi_status_lbl, COLOR_WARNING, 0);
+            lv_obj_set_style_text_color(wifi_status_lbl, THEME_WARNING, 0);
         } else {
             lv_label_set_text(wifi_status_lbl, "状态: 未连接");
-            lv_obj_set_style_text_color(wifi_status_lbl, COLOR_DANGER, 0);
+            lv_obj_set_style_text_color(wifi_status_lbl, THEME_DANGER, 0);
         }
     }
 
     auto networks = SystemManager::get_scanned_networks();
-    if (networks.size() > 0 && lv_obj_get_child_cnt(wifi_list) <= 1) {
-        // Populated networks
+    if (networks.size() > 0) {
+        // 每次刷新前先清空旧列表，lv_obj_clean 会触发 LV_EVENT_DELETE 释放 SSID 内存
+        lv_obj_clean(wifi_list);
+
         for (const auto& net : networks) {
             lv_obj_t * btn = lv_btn_create(wifi_list);
             lv_obj_set_width(btn, LV_PCT(100));
             lv_obj_set_style_bg_color(btn, lv_color_white(), 0);
-            lv_obj_set_style_text_color(btn, COLOR_TEXT_MAIN, 0);
+            lv_obj_set_style_text_color(btn, THEME_TEXT_MAIN, 0);
             
             // Allocate a stable string for user_data
             char* ssid_copy = strdup(net.ssid.c_str());
             lv_obj_add_event_cb(btn, wifi_item_cb, LV_EVENT_CLICKED, (void*)ssid_copy);
+            lv_obj_add_event_cb(btn, wifi_item_delete_cb, LV_EVENT_DELETE, (void*)ssid_copy);
 
             lv_obj_t * label = lv_label_create(btn);
             lv_label_set_text(label, net.ssid.c_str());
@@ -200,13 +214,13 @@ static void render_wifi_tab() {
     WifiStatus s = SystemManager::get_wifi_status();
     if (s == WifiStatus::CONNECTED) {
         lv_label_set_text_fmt(wifi_status_lbl, "状态: 已连接 %s", SystemManager::get_current_ssid().c_str());
-        lv_obj_set_style_text_color(wifi_status_lbl, COLOR_SUCCESS, 0);
+        lv_obj_set_style_text_color(wifi_status_lbl, THEME_SUCCESS, 0);
     } else if (s == WifiStatus::CONNECTING) {
         lv_label_set_text(wifi_status_lbl, "状态: 连接中...");
-        lv_obj_set_style_text_color(wifi_status_lbl, COLOR_WARNING, 0);
+        lv_obj_set_style_text_color(wifi_status_lbl, THEME_WARNING, 0);
     } else {
         lv_label_set_text(wifi_status_lbl, "状态: 未连接");
-        lv_obj_set_style_text_color(wifi_status_lbl, COLOR_DANGER, 0);
+        lv_obj_set_style_text_color(wifi_status_lbl, THEME_DANGER, 0);
     }
     lv_obj_add_style(wifi_status_lbl, &style_text_main, 0);
     lv_obj_align(wifi_status_lbl, LV_ALIGN_TOP_RIGHT, -40, 20);
@@ -242,7 +256,7 @@ static void render_wifi_tab() {
     lv_obj_t * conn_btn = lv_btn_create(pwd_card);
     lv_obj_set_size(conn_btn, 260, 40);
     lv_obj_align(conn_btn, LV_ALIGN_TOP_LEFT, 0, 100);
-    lv_obj_set_style_bg_color(conn_btn, COLOR_PRIMARY, 0);
+    lv_obj_set_style_bg_color(conn_btn, THEME_PRIMARY, 0);
     lv_obj_add_event_cb(conn_btn, wifi_connect_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * conn_btn_lbl = lv_label_create(conn_btn);
@@ -336,18 +350,18 @@ lv_obj_t* app_settings_create(void) {
     lv_obj_t * sidebar = lv_obj_create(screen);
     lv_obj_set_size(sidebar, 200, LV_PCT(100));
     lv_obj_align(sidebar, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_color(sidebar, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(sidebar, THEME_SURFACE, 0);
     lv_obj_set_style_border_width(sidebar, 0, 0);
     lv_obj_set_style_radius(sidebar, 0, 0);
 
     lv_obj_t * back_btn = lv_btn_create(sidebar);
     lv_obj_set_size(back_btn, LV_PCT(90), 50);
     lv_obj_align(back_btn, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0xF0F0F0), 0);
+    lv_obj_set_style_bg_color(back_btn, THEME_BG, 0);
     lv_obj_add_event_cb(back_btn, back_btn_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t * back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "← 返回桌面");
-    lv_obj_set_style_text_color(back_label, COLOR_TEXT_MAIN, 0);
+    lv_obj_set_style_text_color(back_label, THEME_TEXT_MAIN, 0);
     lv_obj_set_style_text_font(back_label, font_cn_18, 0);
     lv_obj_align(back_label, LV_ALIGN_CENTER, 0, 0);
 
@@ -362,7 +376,7 @@ lv_obj_t* app_settings_create(void) {
 
         lv_obj_t * label = lv_label_create(menu_btn);
         lv_label_set_text(label, menus[i]);
-        lv_obj_set_style_text_color(label, COLOR_TEXT_MAIN, 0);
+        lv_obj_set_style_text_color(label, THEME_TEXT_MAIN, 0);
         lv_obj_set_style_text_font(label, font_cn_18, 0);
         lv_obj_align(label, LV_ALIGN_LEFT_MID, 20, 0);
     }

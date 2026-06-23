@@ -1,6 +1,9 @@
 #include "lvgl.h"
 #include "gui_app.h"
 #include "gui_styles.h"
+#include "gui_theme.h"
+#include "gui_components.h"
+#include "gui_icons.h"
 #include <stdio.h>
 
 static lv_obj_t * overlay_layer = NULL;
@@ -20,18 +23,20 @@ void gui_overlays_init(void) {
     listening_indicator = lv_obj_create(overlay_layer);
     lv_obj_set_size(listening_indicator, 60, 60);
     lv_obj_align(listening_indicator, LV_ALIGN_TOP_RIGHT, -20, 20);
-    lv_obj_set_style_bg_color(listening_indicator, lv_color_hex(0x3498DB), 0);
+    lv_obj_set_style_bg_color(listening_indicator, THEME_PRIMARY, 0);
     lv_obj_set_style_radius(listening_indicator, LV_RADIUS_CIRCLE, 0);
     lv_obj_add_flag(listening_indicator, LV_OBJ_FLAG_HIDDEN); // 默认隐藏
 
     lv_obj_t * mic_icon = lv_label_create(listening_indicator);
-    lv_label_set_text(mic_icon, "Mic"); // Fallback
+    lv_label_set_text(mic_icon, ICON_MIC);
+    lv_obj_set_style_text_font(mic_icon, font_icon_24, 0);
+    lv_obj_set_style_text_color(mic_icon, lv_color_white(), 0);
     lv_obj_align(mic_icon, LV_ALIGN_CENTER, 0, 0);
 
     // 通知浮层
     notif_label = lv_label_create(overlay_layer);
     lv_obj_add_style(notif_label, &style_card, 0);
-    lv_obj_set_style_bg_color(notif_label, COLOR_WARNING, 0);
+    lv_obj_set_style_bg_color(notif_label, THEME_WARNING, 0);
     lv_obj_set_style_text_color(notif_label, lv_color_white(), 0);
     lv_obj_align(notif_label, LV_ALIGN_TOP_MID, 0, -100); // 默认在屏幕外
 
@@ -39,10 +44,11 @@ void gui_overlays_init(void) {
     tts_indicator = lv_obj_create(overlay_layer);
     lv_obj_set_size(tts_indicator, 600, 60);
     lv_obj_set_style_radius(tts_indicator, 16, 0);
-    lv_obj_set_style_bg_color(tts_indicator, COLOR_SUCCESS, 0);
+    lv_obj_set_style_bg_color(tts_indicator, THEME_SUCCESS, 0);
     lv_obj_set_style_bg_opa(tts_indicator, LV_OPA_80, 0);
     lv_obj_set_style_border_width(tts_indicator, 0, 0);
-    lv_obj_set_style_pad_hor(tts_indicator, 20, 0);
+    lv_obj_set_style_pad_left(tts_indicator, 20, 0);
+    lv_obj_set_style_pad_right(tts_indicator, 20, 0);
     lv_obj_clear_flag(tts_indicator, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(tts_indicator, LV_ALIGN_BOTTOM_MID, 0, 100); // 默认在屏幕外（下方）
 
@@ -60,6 +66,8 @@ static void tts_hide_timer_cb(lv_timer_t * timer) {
     if (!tts_indicator) return;
     lv_obj_align(tts_indicator, LV_ALIGN_BOTTOM_MID, 0, 100);
     lv_obj_add_flag(tts_indicator, LV_OBJ_FLAG_HIDDEN);
+    // 该定时器 repeat_count=1，LVGL 会自动删除；必须清掉静态指针，防止下次 show_tts_text 再次 del 已释放内存
+    tts_timer = NULL;
 }
 
 void gui_app_show_tts_text(const char* text) {
@@ -100,6 +108,7 @@ static void notif_anim_cb(void * var, int32_t v) {
 
 // 隐藏通知
 static void notif_hide_timer_cb(lv_timer_t * timer) {
+    if (!notif_label) return;
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, notif_label);
@@ -107,6 +116,8 @@ static void notif_hide_timer_cb(lv_timer_t * timer) {
     lv_anim_set_time(&a, 300);
     lv_anim_set_exec_cb(&a, notif_anim_cb);
     lv_anim_start(&a);
+    // 该定时器 repeat_count=1，LVGL 会自动删除；必须清掉静态指针，防止下次 show_notification 再次 del 已释放内存
+    notif_timer = NULL;
 }
 
 void gui_app_show_notification(const char* title, const char* message) {
@@ -138,7 +149,7 @@ void gui_app_show_voice_assist(void) {
 
     lv_obj_t * voice_bg = lv_obj_create(overlay_layer);
     lv_obj_set_size(voice_bg, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(voice_bg, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(voice_bg, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(voice_bg, LV_OPA_80, 0);
 
     lv_obj_t * close_btn = lv_btn_create(voice_bg);
@@ -161,7 +172,7 @@ void gui_app_show_camera_preview(void) {
 
     lv_obj_t * cam_bg = lv_obj_create(overlay_layer);
     lv_obj_set_size(cam_bg, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(cam_bg, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_color(cam_bg, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(cam_bg, LV_OPA_90, 0);
 
     lv_obj_t * close_btn = lv_btn_create(cam_bg);
@@ -176,7 +187,7 @@ void gui_app_show_camera_preview(void) {
     lv_obj_t * cam_placeholder = lv_obj_create(cam_bg);
     lv_obj_set_size(cam_placeholder, 320, 240);
     lv_obj_align(cam_placeholder, LV_ALIGN_CENTER, 0, -40);
-    lv_obj_set_style_bg_color(cam_placeholder, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(cam_placeholder, THEME_TEXT_MAIN, 0);
     lv_obj_t * ph_lbl = lv_label_create(cam_placeholder);
     lv_label_set_text(ph_lbl, "[Camera Preview]");
     lv_obj_set_style_text_color(ph_lbl, lv_color_white(), 0);

@@ -47,9 +47,10 @@ typedef struct {
 } vision_infer_payload_t;
 
 // EVT_LLM_RESPONSE_READY 携带的 payload
+#define TTS_TEXT_MAX_LEN 2048
 typedef struct {
-    char tts_text[512];        // 需要语音播报的文本
-    int ui_action_id;          // 需要UI执行的动作ID (由C解析后给出)
+    char tts_text[TTS_TEXT_MAX_LEN];  // 需要语音播报的文本
+    int ui_action_id;                 // 需要UI执行的动作ID (由C解析后给出)
 } llm_response_payload_t;
 
 // UI 动作 ID 常量（ui_action_id 取值）

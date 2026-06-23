@@ -13,6 +13,8 @@ static const char *TAG = "WiFiHelper";
 static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 static bool s_wifi_manager_retry_enabled = true;
+static esp_event_handler_instance_t s_instance_any_id = NULL;
+static esp_event_handler_instance_t s_instance_got_ip = NULL;
 
 void wifi_manager_disable_retry(void) {
     s_wifi_manager_retry_enabled = false;
@@ -44,7 +46,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-void wifi_init_sta(const char* ssid, const char* pass) {
+bool wifi_init_sta(const char* ssid, const char* pass) {
     s_wifi_event_group = xEventGroupCreate();
     esp_netif_init();
     esp_err_t err = esp_event_loop_create_default();
@@ -58,11 +60,9 @@ void wifi_init_sta(const char* ssid, const char* pass) {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_remote_init(&cfg));
 
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
     // 使用原生的 WIFI_EVENT，底层会被宏定义自动接管
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, &instance_any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &instance_got_ip));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, &s_instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &s_instance_got_ip));
 
     if (ssid && strlen(ssid) > 0) {
         wifi_config_t wifi_config = {0};
@@ -82,10 +82,26 @@ void wifi_init_sta(const char* ssid, const char* pass) {
 
         if (bits & WIFI_CONNECTED_BIT) {
             ESP_LOGI(TAG, "successfully connected to ap SSID:%s via C6 Co-Processor", ssid);
+            return true;
         } else {
             ESP_LOGE(TAG, "Failed to connect to SSID:%s", ssid);
+            return false;
         }
     } else {
         ESP_LOGI(TAG, "Hosted WiFi started in idle mode. Waiting for user configuration...");
+        return false;
+    }
+}
+
+void wifi_manager_unregister_handlers(void) {
+    if (s_instance_any_id) {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_instance_any_id);
+        s_instance_any_id = NULL;
+        ESP_LOGI(TAG, "Unregistered boot WiFi event handler (any_id)");
+    }
+    if (s_instance_got_ip) {
+        esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, s_instance_got_ip);
+        s_instance_got_ip = NULL;
+        ESP_LOGI(TAG, "Unregistered boot WiFi event handler (got_ip)");
     }
 }

@@ -44,16 +44,15 @@ static void system_bus_task(void *pvParameters) {
                         voice_cmd_payload_t* voice_payload = (voice_cmd_payload_t*)evt.payload;
                         ESP_LOGI(TAG, "[Event] Voice command received: %s", voice_payload->command_text);
                         
-                        // 关闭聆听指示器，交给云端大模型处理
+                        // 关闭聆听指示器，交给云端大模型异步处理
                         gui_bridge_show_listening_indicator(false);
                         
-                        // 调用 ai_agent 的 LLM API (阻塞式)
-                        // 内部会自动解析响应、执行库存操作、投递 EVT_LLM_RESPONSE_READY
+                        // 将 LLM 调用投递到独立 worker task，避免阻塞系统事件总线
+                        // worker 内部会自动解析响应、执行库存操作、投递 EVT_LLM_RESPONSE_READY
                         std::string voice_text(voice_payload->command_text);
-                        std::string dummy_reply;
-                        if (!smart_fridge::ai::call_llm_api(voice_text, dummy_reply)) {
-                            ESP_LOGE(TAG, "LLM API call failed for: %s", voice_payload->command_text);
-                            gui_bridge_show_notification("错误", "大模型调用失败，请检查网络连接");
+                        if (!smart_fridge::ai::call_llm_api_async(voice_text)) {
+                            ESP_LOGE(TAG, "Failed to enqueue LLM request for: %s", voice_payload->command_text);
+                            gui_bridge_show_notification("错误", "大模型请求入队失败");
                         }
                         
                         free(evt.payload);

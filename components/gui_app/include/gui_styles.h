@@ -1,42 +1,27 @@
 #pragma once
 
-#include "lvgl.h"
+#include "gui_theme.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// ======== Colors ========
-#define COLOR_BG         lv_color_hex(0xF4F6F8)
-#define COLOR_CARD       lv_color_hex(0xFFFFFF)
-#define COLOR_PRIMARY    lv_color_hex(0x4A90E2)
-#define COLOR_TEXT_MAIN  lv_color_hex(0x333333)
-#define COLOR_TEXT_SUB   lv_color_hex(0x888888)
-#define COLOR_SUCCESS    lv_color_hex(0x2ECC71)
-#define COLOR_WARNING    lv_color_hex(0xF1C40F)
-#define COLOR_DANGER     lv_color_hex(0xE74C3C)
-#define COLOR_DIVIDER    lv_color_hex(0xE0E0E0)
-#define COLOR_TAG_BG     lv_color_hex(0xEBF2FC)
+// Legacy color aliases — kept for backward compatibility with existing app code
+#define COLOR_BG         THEME_BG
+#define COLOR_CARD       THEME_SURFACE
+#define COLOR_PRIMARY    THEME_PRIMARY
+#define COLOR_TEXT_MAIN  THEME_TEXT_MAIN
+#define COLOR_TEXT_SUB   THEME_TEXT_SUB
+#define COLOR_SUCCESS    THEME_SUCCESS
+#define COLOR_WARNING    THEME_WARNING
+#define COLOR_DANGER     THEME_DANGER
+#define COLOR_DIVIDER    THEME_DIVIDER
+#define COLOR_TAG_BG     THEME_PRIMARY_LIGHT
 
-// ======== Fonts ========
-// Assuming these are generated or loaded via FreeType
-extern const lv_font_t * font_cn_16;
-extern const lv_font_t * font_cn_18;
-extern const lv_font_t * font_cn_24;
-extern const lv_font_t * font_cn_36;
-extern const lv_font_t * font_icon_24;
-
-// ======== Global Styles ========
-extern lv_style_t style_screen_bg;
-extern lv_style_t style_card;
-extern lv_style_t style_text_main;
-extern lv_style_t style_text_sub;
-extern lv_style_t style_text_title;
-
-/**
- * @brief Initialize all global styles and fonts
- */
-void gui_styles_init(void);
+// Fonts and styles are declared in gui_theme.h
+static inline void gui_styles_init(void) {
+    gui_theme_init();
+}
 
 #ifdef __cplusplus
 }

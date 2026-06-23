@@ -24,5 +24,13 @@ namespace ai {
      */
     bool call_llm_api(const std::string& user_voice_text, std::string& out_reply);
 
+    /**
+     * @brief 异步调用大模型 API
+     * 将请求放入后台 worker 队列，由独立任务执行 HTTP 请求，不阻塞事件总线。
+     * @param user_voice_text 用户转换出的语音文本指令
+     * @return true 成功入队, false 失败
+     */
+    bool call_llm_api_async(const std::string& user_voice_text);
+
 } // namespace ai
 } // namespace smart_fridge
