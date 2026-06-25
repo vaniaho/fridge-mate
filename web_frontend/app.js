@@ -36,6 +36,18 @@ const chatMessages = document.getElementById('chat-messages');
 const chatForm = document.getElementById('chat-form');
 const chatInput = document.getElementById('chat-input');
 const chatSend = document.getElementById('chat-send');
+const voiceLiveStatus = document.getElementById('voice-live-status');
+const voiceLiveDot = document.getElementById('voice-live-dot');
+const voiceModeSelect = document.getElementById('voice-mode-select');
+const browserPlaybackToggle = document.getElementById('browser-playback');
+let microphoneStream = null;
+let microphoneContext = null;
+let microphoneProcessor = null;
+let microphoneSource = null;
+let microphonePending = [];
+let playbackContext = null;
+let playbackCursor = 0;
+let voiceActive = false;
 
 // Settings
 const settingsForm = document.getElementById('settings-form');
@@ -56,11 +68,15 @@ const notesInput = document.getElementById('notes-input');
 
 const iconMap = { '水果': '🍎', '蔬菜': '🥬', '肉类': '🥩', '饮品': '🥛', '其他': '📦', '家常菜': '🍲', '汤类': '🥣', '主食': '🍚', '素菜': '🥗' };
 
-function init() {
+async function init() {
     setupRouter();
     setupEventListeners();
-    fetchInventory();
-    fetchStatus();
+    setupVoiceListeners();
+    // The embedded HTTPS server intentionally keeps a small TLS connection
+    // pool. Avoid opening two API requests and the long-lived WebSocket at
+    // exactly the same time during first paint.
+    await fetchInventory();
+    await fetchStatus();
     setupWebSocket();
 }
 
@@ -78,6 +94,7 @@ function setupRouter() {
             if (target === 'view-history') fetchHistory();
             if (target === 'view-settings') fetchSettings();
             if (target === 'view-recipes') fetchRecipes();
+            if (target === 'view-voice') fetchVoiceConfig();
             if (target === 'view-dashboard') { fetchWeather(); fetchNotes(); }
         });
     });
@@ -183,45 +200,82 @@ function renderInventory() {
     }
 }
 
+async function requestInventoryWrite(data, confirmationMessage) {
+    if (confirmationMessage && !confirm(confirmationMessage)) {
+        return false;
+    }
+
+    const payload = { ...data, confirmed: true };
+    try {
+        const res = await fetch('/api/inventory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        let response = {};
+        try {
+            response = await res.json();
+        } catch (_) {
+            response = {};
+        }
+
+        if (!res.ok || response.status !== 'ok') {
+            alert(response.error || '库存操作失败，请稍后重试');
+            return false;
+        }
+        return true;
+    } catch (_) {
+        alert('网络错误，库存操作未执行');
+        return false;
+    }
+}
+
 async function removeIngredient(name) {
-    await fetch('/api/inventory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'remove', name: name, quantity: 1 })
-    });
-    fetchInventory();
+    const ok = await requestInventoryWrite(
+        { action: 'remove', name, quantity: 1 },
+        `确认取出 1 个 ${name} 吗？`
+    );
+    if (ok) fetchInventory();
 }
 
 async function decreaseIngredient(name, currentQty) {
-    if (currentQty <= 1) {
-        if (!confirm(`确定要取出最后 1 个 ${name} 吗？这会将其从列表中移除。`)) return;
-    }
-    await fetch('/api/inventory', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'remove', name: name, quantity: 1 })
-    });
-    fetchInventory();
+    const message = currentQty <= 1
+        ? `确认取出最后 1 个 ${name} 吗？这会将其从列表中移除。`
+        : `确认取出 1 个 ${name} 吗？`;
+    const ok = await requestInventoryWrite(
+        { action: 'remove', name, quantity: 1 },
+        message
+    );
+    if (ok) fetchInventory();
 }
 
 async function increaseIngredient(name) {
     // We can just call add with quantity 1, but we need to pass category and expire_days
     // A better way is to find the item in state and use its existing metadata
     const item = state.inventory.find(i => i.name === name);
-    if (!item) return;
-    await fetch('/api/inventory', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'add', name: name, category: item.category, quantity: 1, expire_days: item.expire_days })
-    });
-    fetchInventory();
+    if (!item) {
+        alert('未找到该食材，请刷新库存后重试');
+        return;
+    }
+    const ok = await requestInventoryWrite(
+        {
+            action: 'add',
+            name,
+            category: item.category,
+            quantity: 1,
+            expire_days: item.expire_days
+        },
+        `确认增加 1 个 ${name} 吗？`
+    );
+    if (ok) fetchInventory();
 }
 
 async function removeAllIngredient(name, currentQty) {
-    if (!confirm(`确定要清空全部 ${currentQty} 个 ${name} 吗？`)) return;
-    await fetch('/api/inventory', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'remove', name: name, quantity: currentQty })
-    });
-    fetchInventory();
+    const ok = await requestInventoryWrite(
+        { action: 'clear', name },
+        `确认清空全部 ${currentQty} 个 ${name} 吗？此操作不可撤销。`
+    );
+    if (ok) fetchInventory();
 }
 
 // Unix to YYYY-MM-DDTHH:mm string for datetime-local
@@ -286,6 +340,145 @@ function addChatMessage(text, isUser = false) {
     div.textContent = text;
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+    return div;
+}
+
+let streamingAssistantMessage = null;
+
+function appendAssistantStream(text) {
+    if (!text) return;
+    if (!streamingAssistantMessage) {
+        streamingAssistantMessage = addChatMessage('');
+    }
+    streamingAssistantMessage.textContent += text;
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function finishAssistantStream(text) {
+    if (streamingAssistantMessage) {
+        if (text) streamingAssistantMessage.textContent = text;
+        streamingAssistantMessage = null;
+    } else if (text) {
+        addChatMessage(text);
+    }
+}
+
+function sendWsJson(payload) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+        return true;
+    }
+    return false;
+}
+
+function resampleTo16k(input, sourceRate) {
+    if (sourceRate === 16000) return input;
+    const ratio = sourceRate / 16000;
+    const output = new Float32Array(Math.floor(input.length / ratio));
+    for (let i = 0; i < output.length; i++) {
+        const pos = i * ratio;
+        const left = Math.floor(pos);
+        const right = Math.min(left + 1, input.length - 1);
+        const fraction = pos - left;
+        output[i] = input[left] * (1 - fraction) + input[right] * fraction;
+    }
+    return output;
+}
+
+function sendMicrophoneSamples(floatSamples) {
+    const samples = resampleTo16k(floatSamples, microphoneContext.sampleRate);
+    for (const sample of samples) {
+        microphonePending.push(Math.max(-1, Math.min(1, sample)));
+    }
+    while (microphonePending.length >= 320) {
+        const pcm = new Int16Array(320);
+        for (let i = 0; i < pcm.length; i++) {
+            const sample = microphonePending.shift();
+            pcm[i] = sample < 0 ? sample * 32768 : sample * 32767;
+        }
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(pcm.buffer);
+    }
+}
+
+async function startBrowserVoice() {
+    if (voiceActive) {
+        sendWsJson({ type: 'voice.interrupt' });
+        return;
+    }
+    if (!window.isSecureContext || !navigator.mediaDevices) {
+        addChatMessage(
+            `浏览器麦克风需要安全连接。请改用 https://${location.hostname}/ 访问并接受设备证书；证书也可从 http://${location.hostname}/device-cert.pem 下载。`
+        );
+        return;
+    }
+    try {
+        microphoneStream = await navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: true,
+                     noiseSuppression: true, autoGainControl: true }
+        });
+        microphoneContext = new AudioContext();
+        microphoneSource = microphoneContext.createMediaStreamSource(microphoneStream);
+        microphoneProcessor = microphoneContext.createScriptProcessor(1024, 1, 1);
+        microphoneProcessor.onaudioprocess = event => {
+            sendMicrophoneSamples(event.inputBuffer.getChannelData(0));
+        };
+        microphoneSource.connect(microphoneProcessor);
+        microphoneProcessor.connect(microphoneContext.destination);
+        microphonePending = [];
+        voiceActive = true;
+        sendWsJson({ type: 'voice.start', mode: voiceModeSelect.value });
+    } catch (error) {
+        addChatMessage(`无法使用浏览器麦克风：${error.message || error}`);
+    }
+}
+
+function stopBrowserCapture(closeSession = false) {
+    if (microphoneProcessor) microphoneProcessor.disconnect();
+    if (microphoneSource) microphoneSource.disconnect();
+    if (microphoneStream) microphoneStream.getTracks().forEach(track => track.stop());
+    if (microphoneContext) microphoneContext.close();
+    microphoneProcessor = null;
+    microphoneSource = null;
+    microphoneStream = null;
+    microphoneContext = null;
+    microphonePending = [];
+    if (voiceActive) sendWsJson({ type: closeSession ? 'voice.close' : 'voice.stop' });
+    voiceActive = false;
+}
+
+function playPcm16(arrayBuffer) {
+    if (!browserPlaybackToggle.checked) return;
+    if (!playbackContext) playbackContext = new AudioContext({ sampleRate: 16000 });
+    const source = playbackContext.createBufferSource();
+    const samples = new Int16Array(arrayBuffer);
+    const buffer = playbackContext.createBuffer(1, samples.length, 16000);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 32768;
+    source.buffer = buffer;
+    source.connect(playbackContext.destination);
+    playbackCursor = Math.max(playbackCursor, playbackContext.currentTime + 0.02);
+    source.start(playbackCursor);
+    playbackCursor += buffer.duration;
+}
+
+function handleVoiceEvent(message) {
+    const state = message.state || 'idle';
+    if (message.text) voiceLiveStatus.textContent = message.text;
+    else voiceLiveStatus.textContent = state;
+    voiceLiveDot.className = 'voice-live-dot';
+    if (state === 'listening' || state === 'thinking') voiceLiveDot.classList.add('active');
+    if (state === 'speaking') voiceLiveDot.classList.add('speaking');
+
+    if (message.type === 'voice.asr.final') {
+        finishAssistantStream();
+        addChatMessage(message.text, true);
+    }
+    if (message.type === 'voice.assistant.delta') appendAssistantStream(message.text);
+    if (message.type === 'voice.error') addChatMessage(`语音错误：${message.text}`);
+    if (message.type === 'voice.assistant.final') {
+        finishAssistantStream(message.text);
+        fetchInventory();
+    }
 }
 
 // === Dashboard: Weather & Notes ===
@@ -451,9 +644,7 @@ chatForm.addEventListener('submit', async (e) => {
             body: JSON.stringify({ text })
         });
         if (res.ok) {
-            const data = await res.json();
-            addChatMessage(data.reply || "指令已执行！");
-            fetchInventory(); // Refresh immediately
+            await res.json();
         } else {
             addChatMessage("抱歉，大模型处理失败了。");
         }
@@ -471,9 +662,6 @@ async function fetchSettings() {
         const data = await res.json();
         document.getElementById('set-ssid').value = data.wifi_ssid || '';
         document.getElementById('set-pass').value = data.wifi_pass || '';
-        document.getElementById('set-url').value = data.llm_url || '';
-        document.getElementById('set-key').value = data.llm_key || '';
-        document.getElementById('set-model').value = data.llm_model || '';
     } catch(e) { console.error(e); }
 }
 
@@ -481,10 +669,7 @@ settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = {
         wifi_ssid: document.getElementById('set-ssid').value,
-        wifi_pass: document.getElementById('set-pass').value,
-        llm_url: document.getElementById('set-url').value,
-        llm_key: document.getElementById('set-key').value,
-        llm_model: document.getElementById('set-model').value,
+        wifi_pass: document.getElementById('set-pass').value
     };
     try {
         const res = await fetch('/api/settings', {
@@ -493,7 +678,7 @@ settingsForm.addEventListener('submit', async (e) => {
             body: JSON.stringify(data)
         });
         if (res.ok) {
-            alert('设置已保存，部分配置可能需要重启生效。');
+            alert('网络设置已保存，重新连接可能需要重启设备。');
         } else {
             alert('保存失败！');
         }
@@ -553,10 +738,11 @@ function setupEventListeners() {
             quantity: parseInt(document.getElementById('quantity').value),
             expire_days: parseInt(document.getElementById('expire').value)
         };
-        const res = await fetch('/api/inventory', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
-        if (res.ok) {
+        const ok = await requestInventoryWrite(
+            data,
+            `确认存入 ${data.quantity} 个 ${data.name} 吗？\n分类：${data.category}\n保质期：${data.expire_days} 天`
+        );
+        if (ok) {
             addModal.classList.remove('active');
             addForm.reset();
             fetchInventory();
@@ -574,16 +760,15 @@ function setupEventListeners() {
             expire_days: parseInt(document.getElementById('edit-expire').value),
             entry_time: datetimeLocalToUnix(document.getElementById('edit-entry-time').value)
         };
-        const res = await fetch('/api/inventory', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
-        });
-        if (res.ok) {
+        const ok = await requestInventoryWrite(
+            data,
+            `确认将 ${data.name} 修改为 ${data.quantity} 个吗？\n分类：${data.category}\n保质期：${data.expire_days} 天`
+        );
+        if (ok) {
             editModal.classList.remove('active');
             editForm.reset();
             fetchInventory();
             if (document.getElementById('view-history').classList.contains('active')) fetchHistory();
-        } else {
-            alert('修改失败');
         }
     });
 
@@ -683,9 +868,20 @@ function addRecipeIngRow(name = '', qty = 1) {
 function setupWebSocket() {
     if (location.protocol === 'file:') return;
     ws = new WebSocket(`${wsProto}//${location.host}/ws`);
+    ws.binaryType = 'arraybuffer';
     ws.onopen = () => { dot.classList.add('connected'); connStatus.textContent = "已连接"; };
     ws.onclose = () => { dot.classList.remove('connected'); connStatus.textContent = "离线重连中..."; setTimeout(setupWebSocket, 3000); };
     ws.onmessage = (e) => {
+        if (e.data instanceof ArrayBuffer) {
+            playPcm16(e.data);
+            return;
+        }
+        let message = null;
+        try { message = JSON.parse(e.data); } catch (_) {}
+        if (message && message.type && message.type.startsWith('voice.')) {
+            handleVoiceEvent(message);
+            return;
+        }
         if (e.data === 'update') {
             fetchInventory();
             if (document.getElementById('view-history').classList.contains('active')) fetchHistory();
@@ -694,6 +890,200 @@ function setupWebSocket() {
     };
 }
 
+// === Voice Config ===
+let voiceConfigData = {
+    asr: { current: {}, history: [] },
+    llm: { current: {}, history: [] },
+    tts: { current: {}, history: [] },
+    realtime: { current: {}, history: [] }
+};
+
+async function fetchVoiceConfig() {
+    try {
+        const res = await fetch('/api/voice/config');
+        voiceConfigData = await res.json();
+        renderVoiceConfig();
+    } catch (e) { console.error('Voice config fetch failed', e); }
+}
+
+function fillVoiceForm(type, cfg) {
+    const section = document.querySelector(`.voice-config-form[data-type="${type}"]`);
+    if (!section) return;
+    section.querySelector('.voice-provider').value = cfg.provider || '';
+    section.querySelector('.voice-url').value = cfg.url || '';
+    section.querySelector('.voice-key').value = '';  // 不回显真实 key
+    section.querySelector('.voice-key').placeholder = cfg.has_key ? '已配置（留空不修改）' : '未配置';
+    section.querySelector('.voice-model').value = cfg.model || '';
+    section.querySelector('.voice-extra').value = cfg.extra || '';
+
+    const tag = document.getElementById(`${type}-provider-tag`);
+    if (tag) tag.textContent = cfg.provider || '未配置';
+}
+
+function renderVoiceHistory(type, list) {
+    const container = document.getElementById(`${type}-history`);
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!list || list.length === 0) {
+        container.innerHTML = '<div class="voice-history-title">无历史配置</div>';
+        return;
+    }
+
+    const title = document.createElement('div');
+    title.className = 'voice-history-title';
+    title.textContent = '历史配置（点击切换）';
+    container.appendChild(title);
+
+    list.forEach((cfg, index) => {
+        const item = document.createElement('div');
+        item.className = 'voice-history-item';
+        item.innerHTML = `
+            <div class="voice-history-info">
+                <div class="voice-history-model">${cfg.provider} / ${cfg.model}</div>
+                <div class="voice-history-url">${cfg.url}</div>
+            </div>
+            <div class="voice-history-actions">
+                <button class="voice-btn-use" data-type="${type}" data-index="${index}">切换</button>
+                <button class="voice-btn-delete" data-type="${type}" data-index="${index}">删除</button>
+            </div>
+        `;
+        container.appendChild(item);
+    });
+}
+
+function renderVoiceConfig() {
+    ['asr', 'llm', 'tts', 'realtime'].forEach(type => {
+        const section = voiceConfigData[type];
+        if (section) {
+            fillVoiceForm(type, section.current || {});
+            renderVoiceHistory(type, section.history || []);
+        }
+    });
+}
+
+async function saveVoiceConfig(type, formData) {
+    const current = voiceConfigData[type]?.current || {};
+    const cfg = {
+        provider: (formData.provider || current.provider || '').trim(),
+        url: (formData.url || current.url || '').trim(),
+        model: (formData.model || current.model || '').trim(),
+        extra: (formData.extra || current.extra || '').trim()
+    };
+    const newKey = (formData.key || '').trim();
+    if (newKey && newKey !== '********' && newKey !== 'sk-********') {
+        cfg.key = newKey;
+    }
+
+    try {
+        const res = await fetch('/api/voice/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, config: cfg })
+        });
+        const result = await res.json().catch(() => ({}));
+        if (res.ok) {
+            if (!result.persisted) {
+                alert('设备未确认配置已持久化');
+                return;
+            }
+            await fetchVoiceConfig();
+            const saved = voiceConfigData[type]?.current || {};
+            const fieldsMatch =
+                saved.provider === cfg.provider &&
+                saved.url === cfg.url &&
+                saved.model === cfg.model &&
+                saved.extra === cfg.extra &&
+                (!newKey || saved.has_key);
+            alert(fieldsMatch
+                ? `${type.toUpperCase()} 配置已保存并写入 NVS`
+                : `${type.toUpperCase()} 保存后校验不一致，请检查设备日志`);
+        } else {
+            alert(`保存失败：${result.error || result.code || res.status}`);
+        }
+    } catch (e) { alert('网络错误'); }
+}
+
+async function useVoiceHistory(type, index) {
+    const cfg = voiceConfigData[type]?.history?.[index];
+    if (!cfg) return;
+    await saveVoiceConfig(type, cfg);
+}
+
+async function deleteVoiceHistory(type, index) {
+    if (!confirm('确定删除这条历史配置吗？')) return;
+    try {
+        const res = await fetch('/api/voice/config/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, index })
+        });
+        if (res.ok) fetchVoiceConfig();
+        else alert('删除失败');
+    } catch (e) { alert('网络错误'); }
+}
+
+function setupVoiceListeners() {
+    document.querySelectorAll('.voice-config-form').forEach(form => {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const type = form.dataset.type;
+            const data = {
+                provider: form.querySelector('.voice-provider').value,
+                url: form.querySelector('.voice-url').value,
+                key: form.querySelector('.voice-key').value,
+                model: form.querySelector('.voice-model').value,
+                extra: form.querySelector('.voice-extra').value
+            };
+            await saveVoiceConfig(type, data);
+        });
+    });
+
+    document.getElementById('tts-test-btn').addEventListener('click', async () => {
+        const text = document.getElementById('tts-test-text').value.trim();
+        if (!text) return;
+        const btn = document.getElementById('tts-test-btn');
+        btn.disabled = true;
+        btn.textContent = '测试中...';
+        try {
+            const res = await fetch('/api/voice/test-tts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                alert(`TTS 测试成功，返回 ${data.audio_bytes} 字节 ${data.format} 音频`);
+            } else {
+                alert(`TTS 测试失败：${data.error || '未知错误'}`);
+            }
+        } catch (e) { alert('网络错误'); }
+        btn.disabled = false;
+        btn.textContent = '测试 TTS';
+    });
+
+    document.getElementById('chat-voice-btn').addEventListener('click',
+        startBrowserVoice);
+    document.getElementById('voice-stop-btn').addEventListener('click', () => {
+        stopBrowserCapture(true);
+        voiceLiveStatus.textContent = '语音会话已结束';
+        voiceLiveDot.className = 'voice-live-dot';
+    });
+    document.getElementById('voice-interrupt-btn').addEventListener('click', () => {
+        sendWsJson({ type: 'voice.interrupt' });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('voice-btn-use')) {
+            useVoiceHistory(e.target.dataset.type, parseInt(e.target.dataset.index));
+        }
+        if (e.target.classList.contains('voice-btn-delete')) {
+            deleteVoiceHistory(e.target.dataset.type, parseInt(e.target.dataset.index));
+        }
+    });
+}
+
+// Expose legacy helpers
 window.removeIngredient = removeIngredient;
 window.decreaseIngredient = decreaseIngredient;
 window.increaseIngredient = increaseIngredient;

@@ -19,6 +19,16 @@ typedef struct {
     char* text;
 } string_data_t;
 
+typedef struct {
+    int state;
+    char* text;
+} voice_state_data_t;
+
+typedef struct {
+    char* text;
+    bool is_user;
+} voice_message_data_t;
+
 // -------- Async Callbacks (Execute in LVGL Thread) --------
 
 static void async_refresh_inventory_cb(void * user_data) {
@@ -68,6 +78,25 @@ static void async_camera_preview_cb(void * user_data) {
 
 static void async_voice_assist_cb(void * user_data) {
     gui_app_show_voice_assist();
+}
+
+static void async_voice_state_cb(void *user_data) {
+    voice_state_data_t* data = (voice_state_data_t*)user_data;
+    if (data) {
+        gui_voice_assist_set_state((voice_assist_state_t)data->state,
+                                   data->text);
+        free(data->text);
+        free(data);
+    }
+}
+
+static void async_voice_message_cb(void *user_data) {
+    voice_message_data_t* data = (voice_message_data_t*)user_data;
+    if (data) {
+        gui_voice_assist_add_message(data->text, data->is_user);
+        free(data->text);
+        free(data);
+    }
 }
 
 static void async_wake_cb(void * user_data) {
@@ -159,4 +188,27 @@ void gui_bridge_show_camera_preview(void) {
 void gui_bridge_show_voice_assist(void) {
     ESP_LOGI(TAG, "Show Voice Assist Fullscreen");
     lv_async_call(async_voice_assist_cb, NULL);
+}
+
+void gui_bridge_voice_set_state(int state, const char* text) {
+    voice_state_data_t* data =
+        (voice_state_data_t*)calloc(1, sizeof(voice_state_data_t));
+    if (!data) return;
+    data->state = state;
+    data->text = text ? strdup(text) : NULL;
+    lv_async_call(async_voice_state_cb, data);
+}
+
+void gui_bridge_voice_add_message(const char* text, bool is_user) {
+    if (!text || !text[0]) return;
+    voice_message_data_t* data =
+        (voice_message_data_t*)calloc(1, sizeof(voice_message_data_t));
+    if (!data) return;
+    data->text = strdup(text);
+    data->is_user = is_user;
+    if (!data->text) {
+        free(data);
+        return;
+    }
+    lv_async_call(async_voice_message_cb, data);
 }

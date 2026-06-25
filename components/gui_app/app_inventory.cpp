@@ -31,9 +31,17 @@ static void btn_add_cb(lv_event_t * e) {
         auto items = smart_fridge::inventory::get_all_ingredients();
         for (auto& it : items) {
             if (it.name == name) {
-                // 默认增加 1 个单位，保质期按 7 天算（可后续优化）
-                smart_fridge::inventory::add_ingredient(name, it.category, 1, 7);
-                app_inventory_refresh();
+                int expire_days = it.batches.empty() ? 7 : it.batches.front().expire_days;
+                auto result = smart_fridge::inventory::add_ingredient_checked(
+                    name, it.category, 1, expire_days);
+                if (result.ok()) {
+                    app_inventory_refresh();
+                    gui_app_show_notification("库存已更新", "已增加 1 个食材");
+                } else {
+                    gui_app_show_notification(
+                        "操作失败",
+                        smart_fridge::inventory::inventory_error_message(result.error));
+                }
                 break;
             }
         }
@@ -48,8 +56,15 @@ static void btn_sub_cb(lv_event_t * e) {
     if (!name) return;
 
     if (code == LV_EVENT_CLICKED) {
-        smart_fridge::inventory::remove_ingredient(name, 1);
-        app_inventory_refresh();
+        auto result = smart_fridge::inventory::remove_ingredient_checked(name, 1);
+        if (result.ok()) {
+            app_inventory_refresh();
+            gui_app_show_notification("库存已更新", "已取出 1 个食材");
+        } else {
+            gui_app_show_notification(
+                "操作失败",
+                smart_fridge::inventory::inventory_error_message(result.error));
+        }
     } else if (code == LV_EVENT_DELETE) {
         free(name);
     }
@@ -59,31 +74,6 @@ static void btn_close_popup_cb(lv_event_t * e) {
     lv_obj_t * popup_bg = (lv_obj_t *)lv_event_get_user_data(e);
     if (popup_bg) {
         lv_obj_del(popup_bg);
-    }
-}
-
-static void btn_take_all_cb(lv_event_t * e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    // user_data is an array or struct? Let's use lv_obj_get_user_data if available, or just pass a struct.
-    // Better yet, pass the name string, and find the popup by traversing parent.
-    // Wait, LVGL event user_data is per cb. 
-    char * name = (char*)lv_event_get_user_data(e);
-    if (!name) return;
-
-    if (code == LV_EVENT_CLICKED) {
-        smart_fridge::inventory::clear_ingredient(name);
-        app_inventory_refresh();
-        // find popup bg and delete it
-        lv_obj_t * btn = lv_event_get_target(e);
-        lv_obj_t * popup = lv_obj_get_parent(lv_obj_get_parent(btn)); // btn -> btn_matrix/container -> popup -> popup_bg
-        // We can just rely on app_inventory_refresh to redraw, but the popup might still be there.
-        // Actually, just delete the top level screen child that has the popup.
-        // To be safe, we can trigger btn_close_popup_cb or just close all popups.
-        lv_obj_t * screen = lv_scr_act();
-        lv_obj_t * popup_bg = lv_obj_get_child(screen, lv_obj_get_child_cnt(screen) - 1); // rough guess
-        if (popup_bg) lv_obj_del(popup_bg); // A bit hacky, let's improve it below
-    } else if (code == LV_EVENT_DELETE) {
-        free(name);
     }
 }
 
@@ -188,21 +178,51 @@ static void create_ingredient_detail_popup(const std::string& name) {
     // 为了安全，我们可以复用 btn_take_all_cb 并将 popup_bg 存在 btn 的 user_data 里，把 name 放哪？
     // 我们可以专门写一个弹出层的 take all callback
     struct TakeAllData {
-        char name[64];
+        char* name;
         lv_obj_t* popup_bg;
+        bool armed;
     };
     TakeAllData* data = (TakeAllData*)malloc(sizeof(TakeAllData));
-    strncpy(data->name, name.c_str(), sizeof(data->name));
+    if (!data) {
+        gui_app_show_notification("操作失败", "内存不足，无法创建确认操作");
+        return;
+    }
+    data->name = strdup(name.c_str());
+    if (!data->name) {
+        free(data);
+        gui_app_show_notification("操作失败", "内存不足，无法创建确认操作");
+        return;
+    }
     data->popup_bg = popup_bg;
+    data->armed = false;
 
     lv_obj_add_event_cb(btn_take, [](lv_event_t* e){
         lv_event_code_t code = lv_event_get_code(e);
         TakeAllData* d = (TakeAllData*)lv_event_get_user_data(e);
         if (code == LV_EVENT_CLICKED) {
-            smart_fridge::inventory::clear_ingredient(d->name);
-            app_inventory_refresh();
-            lv_obj_del(d->popup_bg);
+            lv_obj_t* button = lv_event_get_target(e);
+            lv_obj_t* label = lv_obj_get_child(button, 0);
+            if (!d->armed) {
+                d->armed = true;
+                if (label) lv_label_set_text(label, "再次点击确认");
+                gui_app_show_notification("请确认", "再次点击将清空该食材全部库存");
+                return;
+            }
+
+            auto result = smart_fridge::inventory::clear_ingredient_checked(d->name);
+            if (result.ok()) {
+                app_inventory_refresh();
+                gui_app_show_notification("库存已更新", "该食材已全部取出");
+                lv_obj_del(d->popup_bg);
+            } else {
+                d->armed = false;
+                if (label) lv_label_set_text(label, "全部取出");
+                gui_app_show_notification(
+                    "操作失败",
+                    smart_fridge::inventory::inventory_error_message(result.error));
+            }
         } else if (code == LV_EVENT_DELETE) {
+            free(d->name);
             free(d);
         }
     }, LV_EVENT_ALL, data);

@@ -14,7 +14,15 @@ menu "Smart Fridge Configuration"
                 Default WiFi password. Can be overridden at runtime via NVS.
     endmenu
 
-    menu "LLM API Settings"
+    menu "Voice Model Settings"
+        comment "ASR / LLM / TTS 三环节默认配置，provider 建议统一为 volcengine"
+
+        config SMART_FRIDGE_DEFAULT_LLM_PROVIDER
+            string "Default LLM Provider"
+            default "volcengine"
+            help
+                Provider name, e.g. volcengine, baidu, moonshot, deepseek.
+
         config SMART_FRIDGE_DEFAULT_LLM_API_URL
             string "Default LLM API URL"
             default "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
@@ -33,6 +41,158 @@ menu "Smart Fridge Configuration"
             default "doubao-seed-1.6-250615"
             help
                 Default LLM model name used in API requests.
+
+        config SMART_FRIDGE_DEFAULT_LLM_EXTRA
+            string "Default LLM Extra Config"
+            default ""
+            help
+                Extra config string, e.g. region, endpoint id.
+
+        config SMART_FRIDGE_DEFAULT_ASR_PROVIDER
+            string "Default ASR Provider"
+            default "volcengine"
+            help
+                ASR provider name.
+
+        config SMART_FRIDGE_DEFAULT_ASR_URL
+            string "Default ASR API URL"
+            default "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+            help
+                Default ASR endpoint URL.
+
+        config SMART_FRIDGE_DEFAULT_ASR_KEY
+            string "Default ASR API Key"
+            default ""
+            help
+                Default ASR API key.
+
+        config SMART_FRIDGE_DEFAULT_ASR_MODEL
+            string "Default ASR Model"
+            default "volc.bigasr.sauc.duration"
+            help
+                Default ASR model name.
+
+        config SMART_FRIDGE_DEFAULT_ASR_EXTRA
+            string "Default ASR Extra Config"
+            default ""
+            help
+                Extra config for ASR, e.g. format=pcm, sample_rate=16000.
+
+        config SMART_FRIDGE_DEFAULT_TTS_PROVIDER
+            string "Default TTS Provider"
+            default "volcengine"
+            help
+                TTS provider name.
+
+        config SMART_FRIDGE_DEFAULT_TTS_URL
+            string "Default TTS API URL"
+            default "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+            help
+                Default TTS endpoint URL.
+
+        config SMART_FRIDGE_DEFAULT_TTS_KEY
+            string "Default TTS API Key"
+            default ""
+            help
+                Default TTS API key.
+
+        config SMART_FRIDGE_DEFAULT_TTS_MODEL
+            string "Default TTS Model"
+            default "zh_female_vv_jupiter_bigtts"
+            help
+                Default TTS model name.
+
+        config SMART_FRIDGE_DEFAULT_TTS_EXTRA
+            string "Default TTS Extra Config"
+            default "{\"resource_id\":\"seed-tts-2.0\",\"model\":\"seed-tts-2.0-standard\",\"sample_rate\":16000}"
+            help
+                Extra config for TTS, e.g. voice_id, speed.
+
+        config SMART_FRIDGE_DEFAULT_REALTIME_PROVIDER
+            string "Default Realtime Voice Provider"
+            default "volcengine"
+
+        config SMART_FRIDGE_DEFAULT_REALTIME_URL
+            string "Default Realtime Voice URL"
+            default "wss://openspeech.bytedance.com/api/v3/realtime/dialogue"
+
+        config SMART_FRIDGE_DEFAULT_REALTIME_KEY
+            string "Default Realtime Voice Access Key"
+            default ""
+
+        config SMART_FRIDGE_DEFAULT_REALTIME_MODEL
+            string "Default Realtime Voice Model"
+            default "1.2.1.1"
+
+        config SMART_FRIDGE_DEFAULT_REALTIME_EXTRA
+            string "Default Realtime Voice Extra Config"
+            default "{\"appid\":\"\",\"resource_id\":\"volc.speech.dialog\",\"app_key\":\"PlgvMymc7f3tQnJ6\",\"speaker\":\"zh_female_vv_jupiter_bigtts\",\"input_mod\":\"keep_alive\"}"
+
+        config AI_WORKER_STACK_SIZE
+            int "AI Worker Task Stack Size"
+            default 24576
+            help
+                Stack size for the AI worker task. LLM HTTPS calls need plenty of stack.
+
+        config AI_WORKER_QUEUE_LEN
+            int "AI Worker Queue Length"
+            default 4
+            help
+                Maximum number of pending LLM requests.
+
+        config AI_LLM_CONNECT_TIMEOUT_MS
+            int "LLM Connect Timeout (ms)"
+            default 10000
+            help
+                Timeout for establishing connection to LLM server.
+
+        config AI_LLM_TOTAL_TIMEOUT_MS
+            int "LLM Total Timeout (ms)"
+            default 30000
+            help
+                Total timeout for LLM request including content generation.
+
+        config AI_LLM_MAX_TTS_LEN
+            int "Max TTS Text Length"
+            default 2048
+            help
+                Maximum length of TTS text returned by LLM.
+
+        config AI_LLM_MAX_PROMPT_INVENTORY
+            int "Max Inventory Items in Prompt"
+            default 30
+            help
+                Limit the number of inventory items injected into system prompt.
+
+        config AI_LLM_MAX_PROMPT_RECIPES
+            int "Max Recipe Suggestions in Prompt"
+            default 5
+            help
+                Limit the number of recipe suggestions injected into system prompt.
+
+        config AI_CONTEXT_CACHE_TTL_MS
+            int "LLM Context Cache TTL (ms)"
+            default 5000
+            help
+                Time-to-live for the inventory context cache used by LLM prompt builder.
+
+        config AI_LLM_MAX_RETRIES
+            int "LLM Max Retries"
+            default 3
+            help
+                Maximum number of retries for transient LLM errors.
+
+        config AI_LLM_RETRY_BASE_MS
+            int "LLM Retry Base Delay (ms)"
+            default 1000
+            help
+                Base delay for exponential backoff retry.
+
+        config AI_LLM_KEY_BUF_SIZE
+            int "LLM API Key Buffer Size"
+            default 512
+            help
+                Buffer size for storing LLM API key.
     endmenu
 
     menu "Weather API Settings"

@@ -1,0 +1,70 @@
+#pragma once
+
+#include "sdkconfig.h"
+
+namespace smart_fridge {
+namespace ai {
+namespace config {
+
+// 将 sdkconfig 中生成的 CONFIG_AI_* 宏映射为 C++ constexpr 常量，
+// 避免在命名空间内直接 #define 宏导致 config::CONFIG_XXX 解析错误。
+
+#ifndef CONFIG_AI_WORKER_STACK_SIZE
+#define CONFIG_AI_WORKER_STACK_SIZE 24576
+#endif
+
+#ifndef CONFIG_AI_WORKER_QUEUE_LEN
+#define CONFIG_AI_WORKER_QUEUE_LEN 4
+#endif
+
+#ifndef CONFIG_AI_LLM_CONNECT_TIMEOUT_MS
+#define CONFIG_AI_LLM_CONNECT_TIMEOUT_MS 10000
+#endif
+
+#ifndef CONFIG_AI_LLM_TOTAL_TIMEOUT_MS
+#define CONFIG_AI_LLM_TOTAL_TIMEOUT_MS 30000
+#endif
+
+#ifndef CONFIG_AI_LLM_MAX_TTS_LEN
+#define CONFIG_AI_LLM_MAX_TTS_LEN 2048
+#endif
+
+#ifndef CONFIG_AI_LLM_MAX_PROMPT_INVENTORY
+#define CONFIG_AI_LLM_MAX_PROMPT_INVENTORY 30
+#endif
+
+#ifndef CONFIG_AI_LLM_MAX_PROMPT_RECIPES
+#define CONFIG_AI_LLM_MAX_PROMPT_RECIPES 5
+#endif
+
+#ifndef CONFIG_AI_CONTEXT_CACHE_TTL_MS
+#define CONFIG_AI_CONTEXT_CACHE_TTL_MS 5000
+#endif
+
+#ifndef CONFIG_AI_LLM_MAX_RETRIES
+#define CONFIG_AI_LLM_MAX_RETRIES 3
+#endif
+
+#ifndef CONFIG_AI_LLM_RETRY_BASE_MS
+#define CONFIG_AI_LLM_RETRY_BASE_MS 1000
+#endif
+
+#ifndef CONFIG_AI_LLM_KEY_BUF_SIZE
+#define CONFIG_AI_LLM_KEY_BUF_SIZE 512
+#endif
+
+constexpr int AI_WORKER_STACK_SIZE = CONFIG_AI_WORKER_STACK_SIZE;
+constexpr int AI_WORKER_QUEUE_LEN = CONFIG_AI_WORKER_QUEUE_LEN;
+constexpr int AI_LLM_CONNECT_TIMEOUT_MS = CONFIG_AI_LLM_CONNECT_TIMEOUT_MS;
+constexpr int AI_LLM_TOTAL_TIMEOUT_MS = CONFIG_AI_LLM_TOTAL_TIMEOUT_MS;
+constexpr int AI_LLM_MAX_TTS_LEN = CONFIG_AI_LLM_MAX_TTS_LEN;
+constexpr int AI_LLM_MAX_PROMPT_INVENTORY = CONFIG_AI_LLM_MAX_PROMPT_INVENTORY;
+constexpr int AI_LLM_MAX_PROMPT_RECIPES = CONFIG_AI_LLM_MAX_PROMPT_RECIPES;
+constexpr int AI_CONTEXT_CACHE_TTL_MS = CONFIG_AI_CONTEXT_CACHE_TTL_MS;
+constexpr int AI_LLM_MAX_RETRIES = CONFIG_AI_LLM_MAX_RETRIES;
+constexpr int AI_LLM_RETRY_BASE_MS = CONFIG_AI_LLM_RETRY_BASE_MS;
+constexpr int AI_LLM_KEY_BUF_SIZE = CONFIG_AI_LLM_KEY_BUF_SIZE;
+
+} // namespace config
+} // namespace ai
+} // namespace smart_fridge

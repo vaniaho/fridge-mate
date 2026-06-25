@@ -130,9 +130,9 @@ void SystemManager::init() {
         }
     }
 
-    // 3. Apply Hardware settings
-    bsp_display_brightness_init();
-    bsp_display_brightness_set(current_brightness);
+    // The BSP already owns and initializes the backlight LEDC channel while
+    // creating the display. Reinitializing it here causes a GPIO 32 conflict.
+    // The saved value is applied by gui_port only after a stable boot frame.
 }
 
 void SystemManager::load_settings() {

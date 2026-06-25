@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -17,7 +18,20 @@ typedef enum {
     EVT_WAKE_WORD_DETECTED,    // 检测到语音唤醒词 (B -> C/A)
     EVT_VOICE_CMD_RCVD,        // 收到完整的语音指令 (B -> C)
     EVT_VISION_INFER_DONE,     // 图像识别完成 (A -> C)
+    EVT_LLM_STREAM_TEXT,       // LLM 已生成一个可显示/播报的完整句子
+    EVT_TTS_STREAM_BEGIN,      // 开始一次多句流式 TTS 响应
+    EVT_TTS_STREAM_SENTENCE,   // 将一个完整句子送入 TTS
+    EVT_TTS_STREAM_END,        // LLM 已结束，播放完队列后结束响应
+    EVT_TTS_STREAM_CANCEL,     // 丢弃当前 TTS 响应
+    EVT_VOICE_SESSION_START,   // 启动板载麦克风会话
+    EVT_VOICE_SESSION_START_EXTERNAL, // 启动浏览器 PCM 会话
+    EVT_VOICE_SESSION_STOP,
+    EVT_VOICE_SESSION_INTERRUPT,
+    EVT_VOICE_MODE_SET,
+    EVT_VOICE_TEXT_INPUT,
+    EVT_AUDIO_HAL_EVENT,
     EVT_LLM_RESPONSE_READY,    // 大模型处理完成，需播报或更新UI (C -> A/B)
+    EVT_TTS_PLAY_DONE,         // TTS 播放完成 (B -> C/A)
     EVT_INVENTORY_UPDATED,     // 食材库存已更新 (C -> A)
     EVT_PIR_TRIGGERED,         // 人体红外检测触发 (C -> A/系统)
     EVT_GOTO_SLEEP             // 触发休眠模式 (C -> 全局)
@@ -51,7 +65,17 @@ typedef struct {
 typedef struct {
     char tts_text[TTS_TEXT_MAX_LEN];  // 需要语音播报的文本
     int ui_action_id;                 // 需要UI执行的动作ID (由C解析后给出)
+    bool tts_already_queued;           // 流式链路已将句子送入 TTS，避免重复播报
 } llm_response_payload_t;
+
+typedef struct {
+    char text[512];
+} llm_stream_text_payload_t;
+
+typedef struct {
+    int event;
+    char text[512];
+} audio_hal_event_payload_t;
 
 // UI 动作 ID 常量（ui_action_id 取值）
 #define UI_ACTION_NONE          0   // 无特殊 UI 操作
@@ -70,7 +94,13 @@ typedef struct {
  */
 esp_err_t send_system_event(sys_event_type_t type, void* payload, size_t payload_size);
 
+esp_err_t voice_session_start(bool external_input);
+esp_err_t voice_session_stop(void);
+esp_err_t voice_session_interrupt(void);
+esp_err_t voice_session_set_mode(int mode);
+esp_err_t voice_session_submit_text(const char* text);
+esp_err_t voice_session_report_audio_event(int event, const char* text);
+
 #ifdef __cplusplus
 }
 #endif
-

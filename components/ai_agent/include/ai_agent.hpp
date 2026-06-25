@@ -1,36 +1,42 @@
 #pragma once
 
 #include <string>
+#include "llm_types.hpp"
 
 namespace smart_fridge {
 namespace ai {
 
     /**
-     * @brief 根据本地食材库存和用户的语音命令，组装发给大模型的完整 JSON 请求串
+     * @brief 根据用户输入文本和当前库存上下文，组装 LLM 请求体（OpenAI 兼容格式）
      */
-    std::string build_llm_request(const std::string& user_voice_text);
+    std::string build_llm_request(const std::string& user_text,
+                                  bool stream = false);
 
     /**
-     * @brief 将大模型返回的 JSON 解析并执行对应的动作（如存入冰箱、投递事件给任务管理器等）
-     * @return 返回大模型的回复文本（tts_reply）
+     * @brief 执行一次完整的 LLM 调用：HTTP 请求 + 解析 + 执行动作
+     * @param user_text 用户输入文本
+     * @param out_reply 用于接收模型回复文本（tts_reply）
+     * @return 详细错误码
      */
-    std::string parse_and_execute_llm_response(const std::string& llm_json_response);
+    llm_error_t call_llm_api(const std::string& user_text, std::string& out_reply);
 
     /**
-     * @brief 阻塞式调用大模型 API 并处理结果
-     * @param user_voice_text 用户转换出的语音文本指令，如"帮我存入两个苹果"
-     * @param out_reply 用于接收大模型的回复文本
-     * @return true 调用成功, false 失败
+     * @brief 异步调用 LLM，不阻塞调用者
+     * @param user_text 用户输入文本
+     * @return true 成功入队
      */
-    bool call_llm_api(const std::string& user_voice_text, std::string& out_reply);
+    bool call_llm_api_async(const std::string& user_text);
 
     /**
-     * @brief 异步调用大模型 API
-     * 将请求放入后台 worker 队列，由独立任务执行 HTTP 请求，不阻塞事件总线。
-     * @param user_voice_text 用户转换出的语音文本指令
-     * @return true 成功入队, false 失败
+     * Cancel the active streamed request and discard queued stale requests.
+     * Used by wake-word/touch barge-in.
      */
-    bool call_llm_api_async(const std::string& user_voice_text);
+    void cancel_llm_api(void);
+
+    /**
+     * @brief 获取 LLM 调用统计（可用于 Web 面板展示）
+     */
+    llm_stats_t get_llm_stats(void);
 
 } // namespace ai
 } // namespace smart_fridge

@@ -12,6 +12,27 @@
 namespace smart_fridge {
 namespace inventory {
 
+    enum class InventoryError {
+        OK = 0,
+        NOT_INITIALIZED,
+        INVALID_NAME,
+        INVALID_CATEGORY,
+        INVALID_QUANTITY,
+        INVALID_EXPIRE_DAYS,
+        INVALID_ENTRY_TIME,
+        NOT_FOUND,
+        INSUFFICIENT_QUANTITY,
+        STORAGE_ERROR
+    };
+
+    struct InventoryResult {
+        InventoryError error = InventoryError::OK;
+        int affected_quantity = 0;
+        int remaining_quantity = 0;
+
+        bool ok() const { return error == InventoryError::OK; }
+    };
+
     /**
      * @brief 食材批次结构体
      */
@@ -43,21 +64,36 @@ namespace inventory {
      * @brief 存入/增加食材（创建新批次）
      */
     bool add_ingredient(const std::string& name, const std::string& category, int quantity, int expire_days);
+    InventoryResult add_ingredient_checked(const std::string& name, const std::string& category,
+                                           int quantity, int expire_days);
+    InventoryResult validate_add_ingredient(const std::string& name, const std::string& category,
+                                            int quantity, int expire_days);
 
     /**
      * @brief 取出/减少食材（按 FIFO 优先扣减最早批次）
      */
     bool remove_ingredient(const std::string& name, int quantity);
+    InventoryResult remove_ingredient_checked(const std::string& name, int quantity);
+    InventoryResult validate_remove_ingredient(const std::string& name, int quantity);
 
     /**
      * @brief 删除某食材的所有批次
      */
     bool clear_ingredient(const std::string& name);
+    InventoryResult clear_ingredient_checked(const std::string& name);
 
     /**
      * @brief 修改食材（清空批次，覆盖为一个新批次）
      */
     bool update_ingredient(const std::string& name, int quantity, const std::string& category, int expire_days, time_t entry_time);
+    InventoryResult update_ingredient_checked(const std::string& name, int quantity,
+                                              const std::string& category, int expire_days,
+                                              time_t entry_time);
+
+    /**
+     * @brief 将库存错误码转换为可直接展示给用户的中文提示
+     */
+    const char* inventory_error_message(InventoryError error);
 
     /**
      * @brief 获取当前所有食材列表

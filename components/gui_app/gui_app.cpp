@@ -1,4 +1,5 @@
 #include "gui_app.h"
+#include "system_events.h"
 #include "gui_styles.h"
 #include "gui_icons.h"
 #include "lvgl.h"
@@ -66,23 +67,28 @@ static void create_splash_screen(void) {
 void gui_app_init(void) {
     ESP_LOGI(TAG, "GUI App Initializing...");
     gui_styles_init();
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     // 1. Create and show Splash
     create_splash_screen();
     lv_scr_load(screen_splash);
     current_screen = screen_splash;
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     // 2. Initialize Overlays
     gui_overlays_init();
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     // 3. Initialize Launcher (kept in memory)
     screen_launcher = lv_obj_create(NULL);
     lv_obj_add_style(screen_launcher, &style_screen_bg, 0);
     gui_launcher_init(screen_launcher);
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     // 4. Initialize Standby
     screen_standby = lv_obj_create(NULL);
     gui_standby_init(screen_standby);
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     // Switch to Launcher
     lv_scr_load_anim(screen_launcher, LV_SCR_LOAD_ANIM_FADE_ON, 500, 1000, true);
@@ -106,8 +112,7 @@ void gui_app_navigate_to(gui_app_id_t app_id) {
             new_screen = app_settings_create();
             break;
         case GUI_APP_VOICE_ASSIST:
-            // Delegate to overlays/modals instead of screen navigation
-            gui_app_show_voice_assist();
+            voice_session_start(false);
             return;
         case GUI_APP_SHOPPING:
             // Placeholder for Shopping app

@@ -7,6 +7,14 @@
 extern "C" {
 #endif
 
+// 语音助手 UI 状态
+typedef enum {
+    VOICE_STATE_IDLE,
+    VOICE_STATE_LISTENING,
+    VOICE_STATE_THINKING,
+    VOICE_STATE_SPEAKING,
+} voice_assist_state_t;
+
 void gui_app_init(void);
 
 // -------- Screen Manager --------
@@ -22,6 +30,8 @@ void gui_app_show_listening_indicator(bool is_listening);
 void gui_app_show_tts_text(const char* text);
 void gui_app_show_camera_preview(void);
 void gui_app_show_voice_assist(void);
+void gui_voice_assist_set_state(voice_assist_state_t state, const char* text);
+void gui_voice_assist_add_message(const char* text, bool is_user);
 
 // -------- Status --------
 void gui_app_set_wifi_status(bool connected);

@@ -1,8 +1,5 @@
 #include "gui_components.h"
 #include "gui_icons.h"
-#include "esp_log.h"
-
-static const char *TAG = "GuiComponents";
 
 lv_obj_t *gui_card_create(lv_obj_t *parent) {
     lv_obj_t *card = lv_obj_create(parent);

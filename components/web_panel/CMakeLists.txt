@@ -1,6 +1,8 @@
 idf_component_register(SRCS "web_server.cpp" "api_routes.cpp"
                     INCLUDE_DIRS "include"
-                    REQUIRES esp_http_server json inventory_system ai_agent system_services esp_wifi dashboard
+                    REQUIRES esp_http_server esp_https_server json inventory_system ai_agent audio_hal system_services esp_wifi dashboard
                     EMBED_TXTFILES "../../web_frontend/index.html"
                                    "../../web_frontend/style.css"
-                                   "../../web_frontend/app.js")
+                                   "../../web_frontend/app.js"
+                                   "server_cert.pem"
+                                   "server_key.pem")

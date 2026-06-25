@@ -19,12 +19,13 @@ void gui_overlays_init(void) {
     // LVGL has a top layer `lv_layer_top()` for overlays
     overlay_layer = lv_layer_top();
 
-    // 语音监听指示器
+    // 语音监听指示器（仅作状态显示，不接受输入，避免误触/拖动）
     listening_indicator = lv_obj_create(overlay_layer);
     lv_obj_set_size(listening_indicator, 60, 60);
     lv_obj_align(listening_indicator, LV_ALIGN_TOP_RIGHT, -20, 20);
     lv_obj_set_style_bg_color(listening_indicator, THEME_PRIMARY, 0);
     lv_obj_set_style_radius(listening_indicator, LV_RADIUS_CIRCLE, 0);
+    lv_obj_clear_flag(listening_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(listening_indicator, LV_OBJ_FLAG_HIDDEN); // 默认隐藏
 
     lv_obj_t * mic_icon = lv_label_create(listening_indicator);
@@ -49,7 +50,7 @@ void gui_overlays_init(void) {
     lv_obj_set_style_border_width(tts_indicator, 0, 0);
     lv_obj_set_style_pad_left(tts_indicator, 20, 0);
     lv_obj_set_style_pad_right(tts_indicator, 20, 0);
-    lv_obj_clear_flag(tts_indicator, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(tts_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(tts_indicator, LV_ALIGN_BOTTOM_MID, 0, 100); // 默认在屏幕外（下方）
 
     lv_obj_t * tts_text = lv_label_create(tts_indicator);
@@ -142,29 +143,6 @@ void gui_app_show_notification(const char* title, const char* message) {
     }
     notif_timer = lv_timer_create(notif_hide_timer_cb, 3000, NULL);
     lv_timer_set_repeat_count(notif_timer, 1);
-}
-
-void gui_app_show_voice_assist(void) {
-    if (!overlay_layer) return;
-
-    lv_obj_t * voice_bg = lv_obj_create(overlay_layer);
-    lv_obj_set_size(voice_bg, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(voice_bg, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(voice_bg, LV_OPA_80, 0);
-
-    lv_obj_t * close_btn = lv_btn_create(voice_bg);
-    lv_obj_align(close_btn, LV_ALIGN_TOP_LEFT, 20, 20);
-    lv_obj_t * close_lbl = lv_label_create(close_btn);
-    lv_label_set_text(close_lbl, "<- Back");
-    
-    lv_obj_add_event_cb(close_btn, [](lv_event_t * e) {
-        lv_obj_del((lv_obj_t*)lv_event_get_user_data(e));
-    }, LV_EVENT_CLICKED, voice_bg);
-
-    lv_obj_t * title = lv_label_create(voice_bg);
-    lv_label_set_text(title, "Listening...");
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -40);
 }
 
 void gui_app_show_camera_preview(void) {

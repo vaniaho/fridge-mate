@@ -95,6 +95,16 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.1.2
+  espressif/esp_websocket_client:
+    component_hash: 3fb288702517ef4d75bf933a115f1056ee0c2540d964f9e1d856e0bb67e1dfeb
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.0
   espressif/freetype:
     component_hash: a4169cdd22b3572342b2d640d7082405b8895e3214539283601c03412589b65d
     dependencies:
@@ -152,12 +162,13 @@ direct_dependencies:
 - espressif/esp_lcd_ek79007
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_port
+- espressif/esp_websocket_client
 - espressif/freetype
 - espressif/zlib
 - gui_port
 - idf
 - lvgl/lvgl
 - waveshare/esp32_p4_wifi6_touch_lcd_7b
-manifest_hash: de3550df5aac2a191fb8edc925566b924bdaf409f1a9897d6a315477dc7a0822
+manifest_hash: e0202825fe7162fbed99f2d48ebc8ef0083041683ac698fc802165fe629f5810
 target: esp32p4
 version: 2.0.0

@@ -1,6 +1,8 @@
 #include "gui_theme.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -35,12 +37,37 @@ static bool load_ttf_to_psram(const char *path, void **mem_out, size_t *size_out
     *size_out = ftell(f);
     fseek(f, 0, SEEK_SET);
     *mem_out = heap_caps_malloc(*size_out, MALLOC_CAP_SPIRAM);
-    if (*mem_out) {
-        fread(*mem_out, 1, *size_out, f);
-        ESP_LOGI(TAG, "Cached %s into PSRAM (%u bytes)", path, (unsigned)*size_out);
-    } else {
+    if (!*mem_out) {
         ESP_LOGE(TAG, "Failed to allocate PSRAM for %s", path);
+        fclose(f);
+        return false;
     }
+
+    // Large single fread calls can keep CPU0 busy long enough to starve its
+    // idle task. Read in chunks and yield so the task watchdog remains healthy.
+    const size_t chunk_size = 64 * 1024;
+    size_t total = 0;
+    while (total < *size_out) {
+        const size_t requested =
+            (*size_out - total) < chunk_size ? (*size_out - total)
+                                             : chunk_size;
+        const size_t read = fread(
+            static_cast<uint8_t *>(*mem_out) + total, 1, requested, f);
+        if (read != requested) {
+            ESP_LOGE(TAG, "Short read while caching %s (%u/%u)", path,
+                     (unsigned)(total + read), (unsigned)*size_out);
+            heap_caps_free(*mem_out);
+            *mem_out = NULL;
+            *size_out = 0;
+            fclose(f);
+            return false;
+        }
+        total += read;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    ESP_LOGI(TAG, "Cached %s into PSRAM (%u bytes)", path,
+             (unsigned)*size_out);
     fclose(f);
     return true;
 }
@@ -59,6 +86,7 @@ static void init_freetype_font(const char *path, void *mem, size_t mem_size,
     } else {
         ESP_LOGE(TAG, "Failed to load font %s at weight %u", path, weight);
     }
+    vTaskDelay(pdMS_TO_TICKS(1));
 }
 #endif
 
@@ -68,25 +96,35 @@ void gui_theme_init(void) {
     if (lv_freetype_init(64, 8, 0)) {
         void *cn_mem = NULL;
         size_t cn_size = 0;
-        load_ttf_to_psram("/internal/NotoSansSC-Regular.ttf", &cn_mem, &cn_size);
+        const bool cn_loaded = load_ttf_to_psram(
+            "/internal/NotoSansSC-Regular.ttf", &cn_mem, &cn_size);
 
         void *icon_mem = NULL;
         size_t icon_size = 0;
-        load_ttf_to_psram("/internal/MaterialIcons-Regular.ttf", &icon_mem, &icon_size);
+        const bool icon_loaded = load_ttf_to_psram(
+            "/internal/MaterialIcons-Regular.ttf", &icon_mem, &icon_size);
 
         lv_ft_info_t info;
 
         // Chinese fonts
-        init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 16, &info, &font_cn_16);
-        init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 18, &info, &font_cn_18);
-        init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 24, &info, &font_cn_24);
-        init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 36, &info, &font_cn_36);
+        if (cn_loaded) {
+            init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 16, &info, &font_cn_16);
+            init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 18, &info, &font_cn_18);
+            init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 24, &info, &font_cn_24);
+            init_freetype_font("/internal/NotoSansSC-Regular.ttf", cn_mem, cn_size, 36, &info, &font_cn_36);
+        }
 
         // Icon fonts
-        init_freetype_font("/internal/MaterialIcons-Regular.ttf", icon_mem, icon_size, 24, &info, &font_icon_24);
-        init_freetype_font("/internal/MaterialIcons-Regular.ttf", icon_mem, icon_size, 36, &info, &font_icon_36);
+        if (icon_loaded) {
+            init_freetype_font("/internal/MaterialIcons-Regular.ttf", icon_mem, icon_size, 24, &info, &font_icon_24);
+            init_freetype_font("/internal/MaterialIcons-Regular.ttf", icon_mem, icon_size, 36, &info, &font_icon_36);
+        }
 
-        ESP_LOGI(TAG, "Fonts loaded successfully");
+        if (cn_loaded && icon_loaded) {
+            ESP_LOGI(TAG, "Fonts loaded successfully");
+        } else {
+            ESP_LOGW(TAG, "Some fonts failed to load; using fallbacks");
+        }
     } else {
         ESP_LOGE(TAG, "Failed to initialize FreeType");
     }

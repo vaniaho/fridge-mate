@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <cctype>
+#include <utility>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -21,6 +23,32 @@ static bool sd_card_available = false; // SD 卡是否可用，不可用时回�
 static SemaphoreHandle_t inventory_mutex = NULL; // 保护 inventory_cache 的多线程并发访问
 static int next_id = 0;  // 自增 ID 计数器，避免删除后 ID 碰撞
 static int next_batch_id = 0;
+
+static constexpr int MAX_NAME_BYTES = 96;
+static constexpr int MAX_CATEGORY_BYTES = 48;
+static constexpr int MAX_WRITE_QUANTITY = 9999;
+static constexpr int MAX_EXPIRE_DAYS = 3650;
+
+static bool is_blank_string(const std::string& value) {
+    if (value.empty()) return true;
+    for (unsigned char ch : value) {
+        if (!std::isspace(ch)) return false;
+    }
+    return true;
+}
+
+static InventoryResult make_error(InventoryError error) {
+    InventoryResult result;
+    result.error = error;
+    return result;
+}
+
+static auto find_item_by_name(const std::string& name) {
+    return std::find_if(inventory_cache.begin(), inventory_cache.end(),
+                        [&name](const IngredientType& item) {
+                            return item.name == name;
+                        });
+}
 
 /**
  * @brief 将当前缓存中的食材列表序列化为 JSON 并写入 SD 卡
@@ -219,11 +247,48 @@ bool init_database() {
     return true;
 }
 
-bool add_ingredient(const std::string& name, const std::string& category, int quantity, int expire_days) {
-    if (!is_initialized) return false;
+InventoryResult validate_add_ingredient(const std::string& name, const std::string& category,
+                                        int quantity, int expire_days) {
+    if (!is_initialized) return make_error(InventoryError::NOT_INITIALIZED);
+    if (is_blank_string(name) || name.size() > MAX_NAME_BYTES) {
+        return make_error(InventoryError::INVALID_NAME);
+    }
+    if (is_blank_string(category) || category.size() > MAX_CATEGORY_BYTES) {
+        return make_error(InventoryError::INVALID_CATEGORY);
+    }
+    if (quantity <= 0 || quantity > MAX_WRITE_QUANTITY) {
+        return make_error(InventoryError::INVALID_QUANTITY);
+    }
+    if (expire_days <= 0 || expire_days > MAX_EXPIRE_DAYS) {
+        return make_error(InventoryError::INVALID_EXPIRE_DAYS);
+    }
 
     xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+    auto it = find_item_by_name(name);
+    if (it != inventory_cache.end() &&
+        it->total_quantity > MAX_WRITE_QUANTITY - quantity) {
+        xSemaphoreGive(inventory_mutex);
+        return make_error(InventoryError::INVALID_QUANTITY);
+    }
+    xSemaphoreGive(inventory_mutex);
+    return {};
+}
 
+InventoryResult add_ingredient_checked(const std::string& name, const std::string& category,
+                                       int quantity, int expire_days) {
+    InventoryResult validation = validate_add_ingredient(name, category, quantity, expire_days);
+    if (!validation.ok()) return validation;
+
+    xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+    auto current_item = find_item_by_name(name);
+    if (current_item != inventory_cache.end() &&
+        current_item->total_quantity > MAX_WRITE_QUANTITY - quantity) {
+        xSemaphoreGive(inventory_mutex);
+        return make_error(InventoryError::INVALID_QUANTITY);
+    }
+    auto old_cache = inventory_cache;
+    int old_next_id = next_id;
+    int old_next_batch_id = next_batch_id;
     // 获取当前时间戳（这依赖于 rtc_time.c 模块已经同步了 NTP 或 RTC）
     time_t now;
     time(&now);
@@ -270,17 +335,71 @@ bool add_ingredient(const std::string& name, const std::string& category, int qu
     }
 
     ESP_LOGI(TAG, "Added new ingredient batch: %s (Qty: %d)", name.c_str(), quantity);
-    history_append(HistoryAction::ADD, name, quantity);
-    
-    bool result = save_to_disk();
+    if (!save_to_disk()) {
+        inventory_cache = std::move(old_cache);
+        next_id = old_next_id;
+        next_batch_id = old_next_batch_id;
+        xSemaphoreGive(inventory_mutex);
+        return make_error(InventoryError::STORAGE_ERROR);
+    }
+
+    auto saved_item = find_item_by_name(name);
+    InventoryResult result;
+    result.affected_quantity = quantity;
+    result.remaining_quantity = saved_item != inventory_cache.end() ? saved_item->total_quantity : 0;
     xSemaphoreGive(inventory_mutex);
+
+    history_append(HistoryAction::ADD, name, quantity);
     return result;
 }
 
-bool remove_ingredient(const std::string& name, int quantity) {
-    if (!is_initialized || quantity <= 0) return false;
+bool add_ingredient(const std::string& name, const std::string& category,
+                    int quantity, int expire_days) {
+    return add_ingredient_checked(name, category, quantity, expire_days).ok();
+}
+
+InventoryResult validate_remove_ingredient(const std::string& name, int quantity) {
+    if (!is_initialized) return make_error(InventoryError::NOT_INITIALIZED);
+    if (is_blank_string(name) || name.size() > MAX_NAME_BYTES) {
+        return make_error(InventoryError::INVALID_NAME);
+    }
+    if (quantity <= 0 || quantity > MAX_WRITE_QUANTITY) {
+        return make_error(InventoryError::INVALID_QUANTITY);
+    }
 
     xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+    auto it = find_item_by_name(name);
+    if (it == inventory_cache.end()) {
+        xSemaphoreGive(inventory_mutex);
+        return make_error(InventoryError::NOT_FOUND);
+    }
+    if (quantity > it->total_quantity) {
+        InventoryResult result = make_error(InventoryError::INSUFFICIENT_QUANTITY);
+        result.remaining_quantity = it->total_quantity;
+        xSemaphoreGive(inventory_mutex);
+        return result;
+    }
+    xSemaphoreGive(inventory_mutex);
+    return {};
+}
+
+InventoryResult remove_ingredient_checked(const std::string& name, int quantity) {
+    InventoryResult validation = validate_remove_ingredient(name, quantity);
+    if (!validation.ok()) return validation;
+
+    xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+    auto current_item = find_item_by_name(name);
+    if (current_item == inventory_cache.end()) {
+        xSemaphoreGive(inventory_mutex);
+        return make_error(InventoryError::NOT_FOUND);
+    }
+    if (quantity > current_item->total_quantity) {
+        InventoryResult result = make_error(InventoryError::INSUFFICIENT_QUANTITY);
+        result.remaining_quantity = current_item->total_quantity;
+        xSemaphoreGive(inventory_mutex);
+        return result;
+    }
+    auto old_cache = inventory_cache;
 
     for (auto it = inventory_cache.begin(); it != inventory_cache.end(); ++it) {
         if (it->name == name) {
@@ -304,44 +423,100 @@ bool remove_ingredient(const std::string& name, int quantity) {
             
             it->total_quantity -= actual_removed;
             ESP_LOGI(TAG, "Removed %s quantity %d, remaining total: %d", name.c_str(), actual_removed, it->total_quantity);
-            history_append(HistoryAction::REMOVE, name, actual_removed);
-            
+            int remaining_quantity = it->total_quantity;
+
             if (it->total_quantity <= 0 || it->batches.empty()) {
                 inventory_cache.erase(it);
                 ESP_LOGI(TAG, "Removed %s from inventory completely", name.c_str());
+                remaining_quantity = 0;
             }
-            
-            bool result = save_to_disk();
+
+            if (!save_to_disk()) {
+                inventory_cache = std::move(old_cache);
+                xSemaphoreGive(inventory_mutex);
+                return make_error(InventoryError::STORAGE_ERROR);
+            }
+
             xSemaphoreGive(inventory_mutex);
+            history_append(HistoryAction::REMOVE, name, actual_removed);
+
+            InventoryResult result;
+            result.affected_quantity = actual_removed;
+            result.remaining_quantity = remaining_quantity;
             return result;
         }
     }
     
     xSemaphoreGive(inventory_mutex);
     ESP_LOGW(TAG, "Ingredient '%s' not found, nothing removed.", name.c_str());
-    return false;
+    return make_error(InventoryError::NOT_FOUND);
 }
 
-bool clear_ingredient(const std::string& name) {
-    if (!is_initialized) return false;
+bool remove_ingredient(const std::string& name, int quantity) {
+    return remove_ingredient_checked(name, quantity).ok();
+}
+
+InventoryResult clear_ingredient_checked(const std::string& name) {
+    if (!is_initialized) return make_error(InventoryError::NOT_INITIALIZED);
+    if (is_blank_string(name) || name.size() > MAX_NAME_BYTES) {
+        return make_error(InventoryError::INVALID_NAME);
+    }
+
     xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+    auto old_cache = inventory_cache;
 
     for (auto it = inventory_cache.begin(); it != inventory_cache.end(); ++it) {
         if (it->name == name) {
-            history_append(HistoryAction::REMOVE, name, it->total_quantity);
+            int removed_quantity = it->total_quantity;
             inventory_cache.erase(it);
-            bool result = save_to_disk();
+            if (!save_to_disk()) {
+                inventory_cache = std::move(old_cache);
+                xSemaphoreGive(inventory_mutex);
+                return make_error(InventoryError::STORAGE_ERROR);
+            }
             xSemaphoreGive(inventory_mutex);
+
+            history_append(HistoryAction::REMOVE, name, removed_quantity);
+            InventoryResult result;
+            result.affected_quantity = removed_quantity;
             return result;
         }
     }
     xSemaphoreGive(inventory_mutex);
-    return false;
+    return make_error(InventoryError::NOT_FOUND);
 }
 
-bool update_ingredient(const std::string& name, int quantity, const std::string& category, int expire_days, time_t entry_time) {
-    if (!is_initialized) return false;
+bool clear_ingredient(const std::string& name) {
+    return clear_ingredient_checked(name).ok();
+}
+
+InventoryResult update_ingredient_checked(const std::string& name, int quantity,
+                                          const std::string& category, int expire_days,
+                                          time_t entry_time) {
+    if (!is_initialized) return make_error(InventoryError::NOT_INITIALIZED);
+    if (is_blank_string(name) || name.size() > MAX_NAME_BYTES) {
+        return make_error(InventoryError::INVALID_NAME);
+    }
+    if (is_blank_string(category) || category.size() > MAX_CATEGORY_BYTES) {
+        return make_error(InventoryError::INVALID_CATEGORY);
+    }
+    if (quantity <= 0 || quantity > MAX_WRITE_QUANTITY) {
+        return make_error(InventoryError::INVALID_QUANTITY);
+    }
+    if (expire_days <= 0 || expire_days > MAX_EXPIRE_DAYS) {
+        return make_error(InventoryError::INVALID_EXPIRE_DAYS);
+    }
+    if (entry_time <= 0) return make_error(InventoryError::INVALID_ENTRY_TIME);
+
+    time_t now;
+    time(&now);
+    if (now > 1700000000 && entry_time > now + 24 * 3600) {
+        return make_error(InventoryError::INVALID_ENTRY_TIME);
+    }
+
     xSemaphoreTake(inventory_mutex, portMAX_DELAY);
+    auto old_cache = inventory_cache;
+    int old_next_batch_id = next_batch_id;
 
     for (auto& item : inventory_cache) {
         if (item.name == name) {
@@ -357,15 +532,45 @@ bool update_ingredient(const std::string& name, int quantity, const std::string&
             new_batch.expire_time = entry_time + (expire_days * 24 * 3600);
             
             item.batches.push_back(new_batch);
-            
-            bool result = save_to_disk();
+
+            if (!save_to_disk()) {
+                inventory_cache = std::move(old_cache);
+                next_batch_id = old_next_batch_id;
+                xSemaphoreGive(inventory_mutex);
+                return make_error(InventoryError::STORAGE_ERROR);
+            }
             xSemaphoreGive(inventory_mutex);
+
+            InventoryResult result;
+            result.affected_quantity = quantity;
+            result.remaining_quantity = quantity;
             return result;
         }
     }
     
     xSemaphoreGive(inventory_mutex);
-    return false;
+    return make_error(InventoryError::NOT_FOUND);
+}
+
+bool update_ingredient(const std::string& name, int quantity, const std::string& category,
+                       int expire_days, time_t entry_time) {
+    return update_ingredient_checked(name, quantity, category, expire_days, entry_time).ok();
+}
+
+const char* inventory_error_message(InventoryError error) {
+    switch (error) {
+        case InventoryError::OK: return "操作成功";
+        case InventoryError::NOT_INITIALIZED: return "库存系统尚未初始化";
+        case InventoryError::INVALID_NAME: return "食材名称不能为空或过长";
+        case InventoryError::INVALID_CATEGORY: return "食材分类不能为空或过长";
+        case InventoryError::INVALID_QUANTITY: return "数量必须在 1 到 9999 之间";
+        case InventoryError::INVALID_EXPIRE_DAYS: return "保质期必须在 1 到 3650 天之间";
+        case InventoryError::INVALID_ENTRY_TIME: return "存入时间无效，不能晚于当前时间一天以上";
+        case InventoryError::NOT_FOUND: return "未找到该食材";
+        case InventoryError::INSUFFICIENT_QUANTITY: return "库存数量不足";
+        case InventoryError::STORAGE_ERROR: return "库存保存失败，操作已回滚";
+        default: return "库存操作失败";
+    }
 }
 
 std::vector<IngredientType> get_all_ingredients() {

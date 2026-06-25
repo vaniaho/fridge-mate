@@ -5,7 +5,11 @@
 #include "esp_err.h"
 #include "system_events.h"
 #include "gui_bridge.h"
+#include "gui_app.h"
+#include "audio_api.h"
 #include "ai_agent.hpp"
+#include "web_panel.h"
+#include "cJSON.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -13,7 +17,61 @@ static const char *TAG = "TaskManager";
 
 // 全局系统事件队列句柄
 static QueueHandle_t sys_event_queue = NULL;
-#define SYS_EVENT_QUEUE_SIZE 20
+#define SYS_EVENT_QUEUE_SIZE 40
+
+static bool s_voice_session_active = false;
+static bool s_voice_external_input = false;
+
+static void broadcast_voice_json(const char* type, const char* state,
+                                 const char* text) {
+    cJSON* root = cJSON_CreateObject();
+    if (!root) return;
+    cJSON_AddStringToObject(root, "type", type ? type : "voice.event");
+    if (state) cJSON_AddStringToObject(root, "state", state);
+    if (text) cJSON_AddStringToObject(root, "text", text);
+    cJSON_AddStringToObject(
+        root, "mode",
+        audio_hal_get_voice_mode() == AUDIO_VOICE_MODE_REALTIME
+            ? "realtime" : "cascade");
+    const char* json = cJSON_PrintUnformatted(root);
+    if (json) {
+        web_panel_broadcast_ws(json);
+        free((void*)json);
+    }
+    cJSON_Delete(root);
+}
+
+static void set_voice_state(voice_assist_state_t state, const char* text) {
+    gui_bridge_voice_set_state((int)state, text);
+    const char* state_name = "idle";
+    if (state == VOICE_STATE_LISTENING) state_name = "listening";
+    else if (state == VOICE_STATE_THINKING) state_name = "thinking";
+    else if (state == VOICE_STATE_SPEAKING) state_name = "speaking";
+    broadcast_voice_json("voice.state", state_name, text);
+}
+
+static esp_err_t start_voice_capture(bool external_input) {
+    s_voice_session_active = true;
+    s_voice_external_input = external_input;
+    smart_fridge::ai::cancel_llm_api();
+    audio_hal_interrupt();
+    gui_bridge_wake();
+    gui_bridge_show_voice_assist();
+    gui_bridge_show_listening_indicator(true);
+    set_voice_state(VOICE_STATE_LISTENING, external_input
+        ? "正在接收浏览器麦克风..." : "正在聆听...");
+    const esp_err_t result =
+        external_input ? audio_hal_start_external_listening()
+                       : audio_hal_start_listening();
+    if (result != ESP_OK) {
+        s_voice_session_active = false;
+        gui_bridge_show_listening_indicator(false);
+        set_voice_state(VOICE_STATE_IDLE, "语音输入启动失败");
+        broadcast_voice_json("voice.error", "idle",
+                             "语音输入启动失败");
+    }
+    return result;
+}
 
 /**
  * @brief 系统总线任务 (System Bus Task)
@@ -35,8 +93,149 @@ static void system_bus_task(void *pvParameters) {
 
                 case EVT_WAKE_WORD_DETECTED:
                     ESP_LOGI(TAG, "[Event] Wake word detected!");
-                    gui_bridge_wake();
-                    gui_bridge_show_listening_indicator(true);
+                    start_voice_capture(false);
+                    break;
+
+                case EVT_VOICE_SESSION_START:
+                    start_voice_capture(false);
+                    break;
+
+                case EVT_VOICE_SESSION_START_EXTERNAL:
+                    start_voice_capture(true);
+                    break;
+
+                case EVT_VOICE_SESSION_STOP:
+                    s_voice_session_active = false;
+                    smart_fridge::ai::cancel_llm_api();
+                    audio_hal_interrupt();
+                    gui_bridge_show_listening_indicator(false);
+                    set_voice_state(VOICE_STATE_IDLE, "语音会话已结束");
+                    break;
+
+                case EVT_VOICE_SESSION_INTERRUPT:
+                    smart_fridge::ai::cancel_llm_api();
+                    audio_hal_interrupt();
+                    broadcast_voice_json("voice.interrupted", "listening",
+                                         "已打断");
+                    if (s_voice_session_active) {
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                        start_voice_capture(s_voice_external_input);
+                    }
+                    break;
+
+                case EVT_VOICE_MODE_SET:
+                    if (evt.payload) {
+                        int mode = *(int*)evt.payload;
+                        free(evt.payload);
+                        smart_fridge::ai::cancel_llm_api();
+                        audio_hal_interrupt();
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        if (audio_hal_set_voice_mode(
+                                mode == AUDIO_VOICE_MODE_REALTIME
+                                    ? AUDIO_VOICE_MODE_REALTIME
+                                    : AUDIO_VOICE_MODE_CASCADE) == ESP_OK &&
+                            s_voice_session_active) {
+                            start_voice_capture(s_voice_external_input);
+                        }
+                    }
+                    break;
+
+                case EVT_VOICE_TEXT_INPUT:
+                    if (evt.payload) {
+                        auto* text_payload =
+                            (llm_stream_text_payload_t*)evt.payload;
+                        gui_bridge_show_voice_assist();
+                        gui_bridge_voice_add_message(text_payload->text, true);
+                        broadcast_voice_json("voice.user_text", "thinking",
+                                             text_payload->text);
+                        set_voice_state(VOICE_STATE_THINKING, "正在思考...");
+                        if (!smart_fridge::ai::call_llm_api_async(
+                                text_payload->text)) {
+                            gui_bridge_show_notification(
+                                "错误", "大模型请求入队失败");
+                        }
+                        free(evt.payload);
+                    }
+                    break;
+
+                case EVT_AUDIO_HAL_EVENT:
+                    if (evt.payload) {
+                        auto* audio_evt =
+                            (audio_hal_event_payload_t*)evt.payload;
+                        switch ((audio_hal_event_t)audio_evt->event) {
+                            case AUDIO_EVT_LISTENING_START:
+                                set_voice_state(VOICE_STATE_LISTENING,
+                                                "正在聆听...");
+                                break;
+                            case AUDIO_EVT_LISTENING_STOP:
+                                gui_bridge_show_listening_indicator(false);
+                                break;
+                            case AUDIO_EVT_ASR_PARTIAL:
+                                set_voice_state(VOICE_STATE_LISTENING,
+                                                audio_evt->text);
+                                broadcast_voice_json("voice.asr.partial",
+                                                     "listening",
+                                                     audio_evt->text);
+                                break;
+                            case AUDIO_EVT_ASR_RESULT:
+                                gui_bridge_voice_add_message(audio_evt->text,
+                                                             true);
+                                set_voice_state(VOICE_STATE_THINKING,
+                                                "正在思考...");
+                                broadcast_voice_json("voice.asr.final",
+                                                     "thinking",
+                                                     audio_evt->text);
+                                break;
+                            case AUDIO_EVT_TTS_START:
+                                set_voice_state(VOICE_STATE_SPEAKING,
+                                                audio_evt->text);
+                                break;
+                            case AUDIO_EVT_TTS_DONE:
+                                set_voice_state(VOICE_STATE_IDLE,
+                                                "播报完成");
+                                break;
+                            case AUDIO_EVT_TTS_INTERRUPTED:
+                                set_voice_state(VOICE_STATE_LISTENING,
+                                                "已打断，继续聆听...");
+                                break;
+                            case AUDIO_EVT_REALTIME_TEXT:
+                                gui_bridge_show_tts_text(audio_evt->text);
+                                set_voice_state(VOICE_STATE_SPEAKING,
+                                                audio_evt->text);
+                                broadcast_voice_json("voice.assistant.delta",
+                                                     "speaking",
+                                                     audio_evt->text);
+                                break;
+                            case AUDIO_EVT_REALTIME_TURN_DONE:
+                                if (audio_evt->text[0]) {
+                                    gui_bridge_voice_add_message(
+                                        audio_evt->text, false);
+                                    broadcast_voice_json(
+                                        "voice.assistant.final",
+                                        s_voice_external_input
+                                            ? "idle" : "listening",
+                                        audio_evt->text);
+                                }
+                                set_voice_state(
+                                    s_voice_external_input
+                                        ? VOICE_STATE_IDLE
+                                        : VOICE_STATE_LISTENING,
+                                    s_voice_external_input
+                                        ? "按麦克风继续"
+                                        : "请继续说...");
+                                break;
+                            case AUDIO_EVT_ASR_ERROR:
+                            case AUDIO_EVT_TTS_ERROR:
+                                set_voice_state(VOICE_STATE_IDLE,
+                                                audio_evt->text);
+                                broadcast_voice_json("voice.error", "idle",
+                                                     audio_evt->text);
+                                break;
+                            default:
+                                break;
+                        }
+                        free(evt.payload);
+                    }
                     break;
 
                 case EVT_VOICE_CMD_RCVD:
@@ -50,6 +249,7 @@ static void system_bus_task(void *pvParameters) {
                         // 将 LLM 调用投递到独立 worker task，避免阻塞系统事件总线
                         // worker 内部会自动解析响应、执行库存操作、投递 EVT_LLM_RESPONSE_READY
                         std::string voice_text(voice_payload->command_text);
+                        set_voice_state(VOICE_STATE_THINKING, "正在思考...");
                         if (!smart_fridge::ai::call_llm_api_async(voice_text)) {
                             ESP_LOGE(TAG, "Failed to enqueue LLM request for: %s", voice_payload->command_text);
                             gui_bridge_show_notification("错误", "大模型请求入队失败");
@@ -72,6 +272,46 @@ static void system_bus_task(void *pvParameters) {
                     }
                     break;
 
+                case EVT_LLM_STREAM_TEXT:
+                    if (evt.payload) {
+                        auto* stream_payload =
+                            (llm_stream_text_payload_t*)evt.payload;
+                        gui_bridge_show_tts_text(stream_payload->text);
+                        broadcast_voice_json("voice.assistant.delta",
+                                             "speaking",
+                                             stream_payload->text);
+                        free(evt.payload);
+                    }
+                    break;
+
+                case EVT_TTS_STREAM_BEGIN:
+                    if (audio_hal_tts_begin_response() != ESP_OK) {
+                        ESP_LOGW(TAG, "Unable to start streamed TTS response");
+                    }
+                    break;
+
+                case EVT_TTS_STREAM_SENTENCE:
+                    if (evt.payload) {
+                        auto* sentence =
+                            (llm_stream_text_payload_t*)evt.payload;
+                        if (audio_hal_tts_enqueue_sentence(sentence->text) !=
+                            ESP_OK) {
+                            ESP_LOGW(TAG, "Unable to enqueue TTS sentence");
+                        }
+                        free(evt.payload);
+                    }
+                    break;
+
+                case EVT_TTS_STREAM_END:
+                    if (audio_hal_tts_end_response() != ESP_OK) {
+                        ESP_LOGW(TAG, "Unable to finish streamed TTS response");
+                    }
+                    break;
+
+                case EVT_TTS_STREAM_CANCEL:
+                    audio_hal_stop_tts();
+                    break;
+
                 case EVT_LLM_RESPONSE_READY:
                     if (evt.payload) {
                         llm_response_payload_t* llm_payload = (llm_response_payload_t*)evt.payload;
@@ -80,6 +320,11 @@ static void system_bus_task(void *pvParameters) {
                         
                         // 通知 A 模块(GUI) 显示 TTS 文本
                         gui_bridge_show_tts_text(llm_payload->tts_text);
+                        gui_bridge_voice_add_message(llm_payload->tts_text,
+                                                     false);
+                        broadcast_voice_json("voice.assistant.final",
+                                             "speaking",
+                                             llm_payload->tts_text);
                         
                         // 根据 ui_action_id 执行差异化 GUI 操作
                         switch (llm_payload->ui_action_id) {
@@ -97,10 +342,28 @@ static void system_bus_task(void *pvParameters) {
                                 break;
                         }
                         
-                        // TODO (B): 通知 B 模块进行语音播报 (当 audio_hal 就绪后接入)
-                        // audio_api_play_tts(llm_payload->tts_text);
+                        // 通知 B 模块（audio_hal）进行语音播报
+                        if (!llm_payload->tts_already_queued) {
+                            audio_hal_play_tts(llm_payload->tts_text);
+                        }
                         
                         free(evt.payload);
+                    }
+                    break;
+
+                case EVT_TTS_PLAY_DONE:
+                    ESP_LOGI(TAG, "[Event] TTS playback done");
+                    // TTS 播报完成后可关闭语音指示器或返回待机
+                    gui_bridge_show_listening_indicator(false);
+                    if (s_voice_session_active &&
+                        !s_voice_external_input) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        audio_hal_start_listening();
+                    } else {
+                        set_voice_state(VOICE_STATE_IDLE,
+                                        s_voice_session_active
+                                            ? "按麦克风继续"
+                                            : "语音会话已结束");
                     }
                     break;
 
@@ -174,4 +437,54 @@ extern "C" esp_err_t send_system_event(sys_event_type_t type, void* payload, siz
         return ESP_FAIL;
     }
     return ESP_OK;
+}
+
+extern "C" esp_err_t voice_session_start(bool external_input) {
+    return send_system_event(
+        external_input ? EVT_VOICE_SESSION_START_EXTERNAL
+                       : EVT_VOICE_SESSION_START,
+        NULL, 0);
+}
+
+extern "C" esp_err_t voice_session_stop(void) {
+    return send_system_event(EVT_VOICE_SESSION_STOP, NULL, 0);
+}
+
+extern "C" esp_err_t voice_session_interrupt(void) {
+    return send_system_event(EVT_VOICE_SESSION_INTERRUPT, NULL, 0);
+}
+
+extern "C" esp_err_t voice_session_set_mode(int mode) {
+    int* payload = (int*)malloc(sizeof(int));
+    if (!payload) return ESP_ERR_NO_MEM;
+    *payload = mode;
+    esp_err_t err = send_system_event(EVT_VOICE_MODE_SET, payload,
+                                      sizeof(*payload));
+    if (err != ESP_OK) free(payload);
+    return err;
+}
+
+extern "C" esp_err_t voice_session_submit_text(const char* text) {
+    if (!text || !text[0]) return ESP_ERR_INVALID_ARG;
+    auto* payload = (llm_stream_text_payload_t*)calloc(
+        1, sizeof(llm_stream_text_payload_t));
+    if (!payload) return ESP_ERR_NO_MEM;
+    strncpy(payload->text, text, sizeof(payload->text) - 1);
+    esp_err_t err = send_system_event(EVT_VOICE_TEXT_INPUT, payload,
+                                      sizeof(*payload));
+    if (err != ESP_OK) free(payload);
+    return err;
+}
+
+extern "C" esp_err_t voice_session_report_audio_event(
+    int event, const char* text) {
+    auto* payload = (audio_hal_event_payload_t*)calloc(
+        1, sizeof(audio_hal_event_payload_t));
+    if (!payload) return ESP_ERR_NO_MEM;
+    payload->event = event;
+    if (text) strncpy(payload->text, text, sizeof(payload->text) - 1);
+    esp_err_t err = send_system_event(EVT_AUDIO_HAL_EVENT, payload,
+                                      sizeof(*payload));
+    if (err != ESP_OK) free(payload);
+    return err;
 }

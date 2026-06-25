@@ -59,6 +59,8 @@ void gui_bridge_show_camera_preview(void);
 
 /** @brief Show Full-screen Voice Assistant */
 void gui_bridge_show_voice_assist(void);
+void gui_bridge_voice_set_state(int state, const char* text);
+void gui_bridge_voice_add_message(const char* text, bool is_user);
 
 #ifdef __cplusplus
 }

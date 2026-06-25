@@ -32,6 +32,7 @@
             <button class="nav-btn" data-target="view-recipes">食谱</button>
             <button class="nav-btn" data-target="view-dashboard">看板</button>
             <button class="nav-btn" data-target="view-chat">AI 助手</button>
+            <button class="nav-btn" data-target="view-voice">语音</button>
             <button class="nav-btn" data-target="view-settings">设置</button>
         </nav>
 
@@ -122,13 +123,182 @@
             <!-- 视图: AI 助手 -->
             <section id="view-chat" class="view">
                 <div class="chat-container glass-panel-inner">
+                    <div class="voice-console">
+                        <div>
+                            <span class="voice-live-dot" id="voice-live-dot"></span>
+                            <span id="voice-live-status">语音会话未启动</span>
+                        </div>
+                        <select id="voice-mode-select">
+                            <option value="cascade">ASR → LLM → TTS</option>
+                            <option value="realtime">端到端实时语音</option>
+                        </select>
+                        <label class="voice-play-toggle">
+                            <input type="checkbox" id="browser-playback" checked>
+                            浏览器播放
+                        </label>
+                        <button type="button" class="btn btn-secondary"
+                                id="voice-interrupt-btn">打断</button>
+                        <button type="button" class="btn btn-secondary"
+                                id="voice-stop-btn">结束</button>
+                    </div>
                     <div class="chat-messages" id="chat-messages">
                         <div class="msg bot-msg">您好！我是小鲜，您可以打字告诉我您放了什么或者拿了什么。</div>
                     </div>
                     <form class="chat-input-area" id="chat-form">
+                        <button type="button" class="chat-voice-btn" id="chat-voice-btn" title="语音输入">🎤</button>
                         <input type="text" id="chat-input" placeholder="例如：帮我放进去两个苹果" required autocomplete="off">
                         <button type="submit" class="btn btn-primary" id="chat-send">发送</button>
                     </form>
+                </div>
+            </section>
+
+            <!-- 视图: 语音配置 -->
+            <section id="view-voice" class="view">
+                <div class="section-header">
+                    <h2>语音模型配置</h2>
+                </div>
+                <div class="voice-intro glass-panel-inner">
+                    <p>级联模式使用 ASR → LLM → TTS，实时模式使用独立的端到端模型。这里是大模型相关配置的唯一入口；切换配置时旧版本会自动保存到历史记录。</p>
+                </div>
+
+                <!-- ASR 配置 -->
+                <div class="voice-section glass-panel-inner">
+                    <div class="voice-section-header">
+                        <h3>🎤 ASR 语音识别</h3>
+                        <span class="voice-tag" id="asr-provider-tag">volcengine</span>
+                    </div>
+                    <form class="voice-config-form" data-type="asr">
+                        <div class="input-group">
+                            <label>Provider</label>
+                            <input type="text" class="voice-provider" placeholder="volcengine">
+                        </div>
+                        <div class="input-group">
+                            <label>API URL</label>
+                            <input type="text" class="voice-url" placeholder="wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async">
+                        </div>
+                        <div class="input-group">
+                            <label>API Key</label>
+                            <input type="password" class="voice-key" placeholder="留空表示不修改">
+                        </div>
+                        <div class="input-group">
+                            <label>Model</label>
+                            <input type="text" class="voice-model" placeholder="volc.bigasr.sauc.duration">
+                        </div>
+                        <div class="input-group">
+                            <label>Extra</label>
+                            <input type="text" class="voice-extra" placeholder='新版 API Key 可留空；旧版填写 {"auth_mode":"legacy","appid":"..."}'>
+                        </div>
+                        <button type="submit" class="btn btn-primary">保存 ASR 配置</button>
+                    </form>
+                    <div class="voice-history" id="asr-history">
+                        <!-- 历史记录由 JS 生成 -->
+                    </div>
+                </div>
+
+                <!-- 端到端实时语音配置 -->
+                <div class="voice-section glass-panel-inner">
+                    <div class="voice-section-header">
+                        <h3>⚡ 端到端实时语音</h3>
+                        <span class="voice-tag" id="realtime-provider-tag">volcengine</span>
+                    </div>
+                    <form class="voice-config-form" data-type="realtime">
+                        <div class="input-group">
+                            <label>Provider</label>
+                            <input type="text" class="voice-provider" value="volcengine">
+                        </div>
+                        <div class="input-group">
+                            <label>WebSocket URL</label>
+                            <input type="text" class="voice-url"
+                                   placeholder="wss://openspeech.bytedance.com/api/v3/realtime/dialogue">
+                        </div>
+                        <div class="input-group">
+                            <label>Access Key</label>
+                            <input type="password" class="voice-key"
+                                   placeholder="留空表示不修改">
+                        </div>
+                        <div class="input-group">
+                            <label>模型版本</label>
+                            <input type="text" class="voice-model"
+                                   placeholder="1.2.1.1">
+                        </div>
+                        <div class="input-group">
+                            <label>Extra JSON</label>
+                            <input type="text" class="voice-extra"
+                                   placeholder='{"appid":"...","speaker":"zh_female_vv_jupiter_bigtts"}'>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            保存实时语音配置
+                        </button>
+                    </form>
+                    <div class="voice-history" id="realtime-history"></div>
+                </div>
+
+                <!-- LLM 配置 -->
+                <div class="voice-section glass-panel-inner">
+                    <div class="voice-section-header">
+                        <h3>🧠 LLM 大模型</h3>
+                        <span class="voice-tag" id="llm-provider-tag">volcengine</span>
+                    </div>
+                    <form class="voice-config-form" data-type="llm">
+                        <div class="input-group">
+                            <label>Provider</label>
+                            <input type="text" class="voice-provider" placeholder="volcengine">
+                        </div>
+                        <div class="input-group">
+                            <label>API URL</label>
+                            <input type="text" class="voice-url" placeholder="https://ark.cn-beijing.volces.com/api/v3/chat/completions">
+                        </div>
+                        <div class="input-group">
+                            <label>API Key</label>
+                            <input type="password" class="voice-key" placeholder="留空表示不修改">
+                        </div>
+                        <div class="input-group">
+                            <label>Model</label>
+                            <input type="text" class="voice-model" placeholder="doubao-seed-1.6-250615">
+                        </div>
+                        <div class="input-group">
+                            <label>Extra</label>
+                            <input type="text" class="voice-extra" placeholder="扩展参数">
+                        </div>
+                        <button type="submit" class="btn btn-primary">保存 LLM 配置</button>
+                    </form>
+                    <div class="voice-history" id="llm-history"></div>
+                </div>
+
+                <!-- TTS 配置 -->
+                <div class="voice-section glass-panel-inner">
+                    <div class="voice-section-header">
+                        <h3>🔊 TTS 语音合成</h3>
+                        <span class="voice-tag" id="tts-provider-tag">volcengine</span>
+                    </div>
+                    <form class="voice-config-form" data-type="tts">
+                        <div class="input-group">
+                            <label>Provider</label>
+                            <input type="text" class="voice-provider" placeholder="volcengine">
+                        </div>
+                        <div class="input-group">
+                            <label>API URL</label>
+                            <input type="text" class="voice-url" placeholder="wss://openspeech.bytedance.com/api/v3/tts/bidirection">
+                        </div>
+                        <div class="input-group">
+                            <label>API Key</label>
+                            <input type="password" class="voice-key" placeholder="留空表示不修改">
+                        </div>
+                        <div class="input-group">
+                            <label>Model / Voice</label>
+                            <input type="text" class="voice-model" placeholder="zh_female_vv_jupiter_bigtts">
+                        </div>
+                        <div class="input-group">
+                            <label>Extra</label>
+                            <input type="text" class="voice-extra" placeholder='{"resource_id":"seed-tts-2.0","model":"seed-tts-2.0-standard","sample_rate":16000}'>
+                        </div>
+                        <button type="submit" class="btn btn-primary">保存 TTS 配置</button>
+                    </form>
+                    <div class="voice-history" id="tts-history"></div>
+                    <div class="tts-test-area">
+                        <input type="text" id="tts-test-text" placeholder="输入要测试播报的文本" value="你好，我是小鲜">
+                        <button class="btn btn-secondary" id="tts-test-btn">测试 TTS</button>
+                    </div>
                 </div>
             </section>
 
@@ -136,7 +306,7 @@
             <section id="view-settings" class="view">
                 <div class="settings-form glass-panel-inner">
                     <form id="settings-form">
-                        <h3>网络配置 (WiFi)</h3>
+                        <h3>设备与网络配置</h3>
                         <div class="input-group">
                             <label>SSID</label>
                             <input type="text" id="set-ssid">
@@ -145,22 +315,9 @@
                             <label>密码</label>
                             <input type="password" id="set-pass">
                         </div>
-                        <br>
-                        <h3>AI 大模型配置</h3>
-                        <div class="input-group">
-                            <label>API URL</label>
-                            <input type="text" id="set-url" placeholder="https://api.openai.com/v1/chat/completions">
-                        </div>
-                        <div class="input-group">
-                            <label>API Key</label>
-                            <input type="password" id="set-key">
-                        </div>
-                        <div class="input-group">
-                            <label>模型名称</label>
-                            <input type="text" id="set-model" placeholder="gpt-4o-mini">
-                        </div>
+                        <p class="text-muted">ASR、LLM、TTS 与端到端实时语音请统一在“语音配置”页面管理。</p>
                         <div class="modal-actions">
-                            <button type="submit" class="btn btn-primary">保存设置 (需重启生效)</button>
+                            <button type="submit" class="btn btn-primary">保存网络设置</button>
                         </div>
                     </form>
                 </div>
@@ -211,7 +368,7 @@
                 <form id="add-form">
                     <div class="input-group">
                         <label for="name">食材名称</label>
-                        <input type="text" id="name" required placeholder="例如：苹果">
+                        <input type="text" id="name" required maxlength="32" placeholder="例如：苹果">
                     </div>
                     <div class="input-group">
                         <label for="category">分类</label>
@@ -233,11 +390,11 @@
                     <div class="input-row">
                         <div class="input-group">
                             <label for="quantity">数量</label>
-                            <input type="number" id="quantity" required min="1" value="1">
+                            <input type="number" id="quantity" required min="1" max="9999" value="1">
                         </div>
                         <div class="input-group">
                             <label for="expire">保质期(天)</label>
-                            <input type="number" id="expire" required min="1" value="7">
+                            <input type="number" id="expire" required min="1" max="3650" value="7">
                         </div>
                     </div>
                     <div class="modal-actions">
@@ -262,7 +419,7 @@
                         <select id="edit-category" required>
                             <option value="水果">水果</option>
                             <option value="蔬菜">蔬菜</option>
-                            <option value="肉类">肉类</option>
+                            <option value="肉禽">肉禽</option>
                             <option value="蛋奶">蛋奶</option>
                             <option value="海鲜">海鲜</option>
                             <option value="豆制品">豆制品</option>
@@ -277,11 +434,11 @@
                     <div class="input-row">
                         <div class="input-group">
                             <label for="edit-quantity">数量</label>
-                            <input type="number" id="edit-quantity" required min="0">
+                            <input type="number" id="edit-quantity" required min="1" max="9999">
                         </div>
                         <div class="input-group">
                             <label for="edit-expire">保质期(天)</label>
-                            <input type="number" id="edit-expire" required min="1">
+                            <input type="number" id="edit-expire" required min="1" max="3650">
                         </div>
                     </div>
                     <div class="input-group">

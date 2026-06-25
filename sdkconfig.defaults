@@ -20,6 +20,21 @@ CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
 # HTTP WebSocket Support
 CONFIG_HTTPD_WS_SUPPORT=y
 
+# Cloud speech gateways can return HTTP Upgrade headers larger than the
+# ESP-IDF default of 1 KB. Keep an 8 KB handshake buffer only while connecting.
+CONFIG_WS_BUFFER_SIZE=8192
+CONFIG_WS_DYNAMIC_BUFFER=y
+
+# HTTP, HTTPS, browser WebSockets and outbound ASR/LLM/TTS coexist.
+CONFIG_LWIP_MAX_SOCKETS=16
+
+# TLS records and WebSocket frame buffers are large. Permit fallback to PSRAM
+# and allocate them only while actively sending or receiving.
+# CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set
+CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_ESP_WS_CLIENT_ENABLE_DYNAMIC_BUFFER=y
+
 # LVGL Chinese Font
 CONFIG_LV_FONT_SIMSUN_16_CJK=y
 
@@ -44,13 +59,36 @@ CONFIG_LV_FREETYPE_CACHE_FT_SIZES=2
 # Use ESP-IDF malloc for LVGL to utilize PSRAM
 CONFIG_LV_MEM_CUSTOM=y
 
-# Increase main task stack size for FreeType rendering
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+# GUI creation performs synchronous FreeType CJK auto-hinting in app_main.
+# 24 KB is large enough for that call chain while still fitting internal SRAM.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=24576
 
 # ESP-Hosted SDIO for ESP32-C6 co-processor (Waveshare board)
+CONFIG_ESP_WIFI_REMOTE_ENABLED=y
+CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
 CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
 # CONFIG_ESP_HOSTED_SPI_HOST_INTERFACE is not set
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
-CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=20000
-CONFIG_ESP_SDIO_CLOCK_FREQ_KHZ=20000
+CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH=4
+CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
+CONFIG_ESP_HOSTED_SDIO_PIN_CMD=19
+CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
+CONFIG_ESP_HOSTED_SDIO_PIN_D0=14
+CONFIG_ESP_HOSTED_SDIO_PRIV_PIN_D1_4BIT_BUS=15
+CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
+CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
+CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
+CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=54
+# Streaming voice defaults
+CONFIG_SMART_FRIDGE_DEFAULT_ASR_URL="wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+CONFIG_SMART_FRIDGE_DEFAULT_ASR_MODEL="volc.bigasr.sauc.duration"
+CONFIG_SMART_FRIDGE_DEFAULT_TTS_URL="wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+CONFIG_SMART_FRIDGE_DEFAULT_TTS_MODEL="zh_female_vv_jupiter_bigtts"
+CONFIG_SMART_FRIDGE_DEFAULT_TTS_EXTRA="{\"resource_id\":\"seed-tts-2.0\",\"model\":\"seed-tts-2.0-standard\",\"sample_rate\":16000}"
+CONFIG_SMART_FRIDGE_DEFAULT_REALTIME_URL="wss://openspeech.bytedance.com/api/v3/realtime/dialogue"
+CONFIG_SMART_FRIDGE_DEFAULT_REALTIME_MODEL="1.2.1.1"
+CONFIG_SMART_FRIDGE_DEFAULT_REALTIME_EXTRA="{\"appid\":\"\",\"resource_id\":\"volc.speech.dialog\",\"app_key\":\"PlgvMymc7f3tQnJ6\",\"speaker\":\"zh_female_vv_jupiter_bigtts\",\"input_mod\":\"keep_alive\"}"

@@ -18,6 +18,7 @@
 #include "system_manager.hpp"
 #include "gui_port.h"
 #include "gui_app.h"
+#include "audio_api.h"
 #include "esp_lvgl_port.h"
 #include "esp_vfs_fat.h"
 #include "vfs_fat_internal.h"
@@ -149,7 +150,8 @@ static void print_system_status(void) {
     if (s_network_ok) {
         ESP_LOGI(TAG, "  WiFi     : %s (已连接)", credentials_get_wifi_ssid());
         ESP_LOGI(TAG, "  LLM 模型 : %s", credentials_get_llm_model());
-        ESP_LOGI(TAG, "  Web 面板 : http://<device-ip>:80/");
+        ESP_LOGI(TAG, "  Web 管理 : http://<device-ip>:80/");
+        ESP_LOGI(TAG, "  Web 语音 : https://<device-ip>:443/");
     } else {
         ESP_LOGW(TAG, "  网络状态 : 离线模式");
     }
@@ -262,7 +264,8 @@ extern "C" void app_main(void) {
     if (s_network_ok) {
         ESP_LOGI(TAG, "[Phase 4] 启动 Web 控制面板...");
         if (web_panel_start() == ESP_OK) {
-            ESP_LOGI(TAG, "  Web 面板已启动 — 手机浏览器访问 http://<device-ip>/");
+            ESP_LOGI(TAG, "  Web 面板已启动 — 管理: http://<device-ip>/");
+            ESP_LOGI(TAG, "  浏览器语音 — https://<device-ip>/（首次需接受设备证书）");
         } else {
             ESP_LOGE(TAG, "  Web 面板启动失败");
         }
@@ -280,6 +283,16 @@ extern "C" void app_main(void) {
     // Initialize SystemManager (NVS, Wi-Fi, Display, Settings)
     // Must be called after gui_port_init so that BSP display is ready
     smart_fridge::system::SystemManager::init();
+
+    // Present a complete built-in-font frame before the expensive CJK font
+    // cache and desktop construction begin. This prevents blue/uninitialized
+    // DSI frames from becoming visible during startup.
+    if (gui_port_show_boot_screen(
+            smart_fridge::system::SystemManager::get_brightness()) !=
+        ESP_OK) {
+        ESP_LOGW(TAG, "  启动画面显示失败，将继续初始化 GUI");
+    }
+
     lvgl_port_lock(0);
     gui_app_init();
     lvgl_port_unlock();
@@ -293,6 +306,72 @@ extern "C" void app_main(void) {
 
     // 首次刷新桌面留言板（天气缓存尚未拉取，会显示占位 "--"）
     gui_bridge_refresh_dashboard();
+
+    // --------------------------------------------------------
+    // Phase 5.5: 初始化音频 HAL 并启动唤醒词监听
+    // --------------------------------------------------------
+    ESP_LOGI(TAG, "[Phase 5.5] 初始化音频 HAL...");
+    esp_err_t audio_err = audio_hal_init();
+    if (audio_err != ESP_OK) {
+        ESP_LOGE(TAG, "  音频 HAL 初始化失败: %s", esp_err_to_name(audio_err));
+    } else {
+        audio_hal_set_output_volume(
+            smart_fridge::system::SystemManager::get_volume());
+    }
+    audio_hal_set_event_callback([](audio_hal_event_t evt, const char* data) {
+        voice_session_report_audio_event((int)evt, data);
+        switch (evt) {
+            case AUDIO_EVT_WAKE_WORD:
+                ESP_LOGI(TAG, "[Audio] Wake word");
+                break;
+            case AUDIO_EVT_LISTENING_START:
+                ESP_LOGI(TAG, "[Audio] Listening start");
+                break;
+            case AUDIO_EVT_LISTENING_STOP:
+                ESP_LOGI(TAG, "[Audio] Listening stop");
+                break;
+            case AUDIO_EVT_ASR_PARTIAL:
+                ESP_LOGI(TAG, "[Audio] ASR partial: %s", data ? data : "");
+                break;
+            case AUDIO_EVT_ASR_RESULT:
+                ESP_LOGI(TAG, "[Audio] ASR: %s", data ? data : "");
+                break;
+            case AUDIO_EVT_ASR_ERROR:
+                ESP_LOGE(TAG, "[Audio] ASR error: %s", data ? data : "");
+                break;
+            case AUDIO_EVT_TTS_START:
+                ESP_LOGI(TAG, "[Audio] TTS start");
+                break;
+            case AUDIO_EVT_TTS_DONE:
+                ESP_LOGI(TAG, "[Audio] TTS done");
+                break;
+            case AUDIO_EVT_TTS_INTERRUPTED:
+                ESP_LOGI(TAG, "[Audio] TTS interrupted");
+                break;
+            case AUDIO_EVT_TTS_ERROR:
+                ESP_LOGE(TAG, "[Audio] TTS error: %s", data ? data : "");
+                break;
+            case AUDIO_EVT_REALTIME_TEXT:
+                ESP_LOGI(TAG, "[Audio] Realtime text: %s",
+                         data ? data : "");
+                break;
+            case AUDIO_EVT_REALTIME_TURN_DONE:
+                ESP_LOGI(TAG, "[Audio] Realtime turn done");
+                break;
+            default:
+                break;
+        }
+    });
+    audio_hal_set_pcm_output_callback(
+        [](const uint8_t* pcm, size_t length, int sample_rate) {
+            if (sample_rate == 16000) {
+                web_panel_broadcast_ws_binary(pcm, length);
+            }
+        });
+    if (audio_err == ESP_OK) {
+        audio_hal_start_wake_word();
+        ESP_LOGI(TAG, "  音频采集/播放已就绪");
+    }
 
     // --------------------------------------------------------
     // Phase 6: 启动后台周期任务
@@ -319,7 +398,6 @@ extern "C" void app_main(void) {
 
     // 主任务保持存活，FreeRTOS 任务负责实际工作
     // event bus / web panel / expiry checker 均在独立任务中运行
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(60000)); // 每 60 秒唤醒一次（仅保活）
-    }
+    // All long-running work is owned by dedicated FreeRTOS tasks. Returning
+    // lets ESP-IDF delete the main task and release its initialization stack.
 }

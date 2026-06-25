@@ -5,6 +5,9 @@
 #include "gui_components.h"
 #include "gui_icons.h"
 #include "system_manager.hpp"
+#include "credentials_manager.h"
+#include "audio_api.h"
+#include "system_events.h"
 #include <stdio.h>
 #include <time.h>
 
@@ -74,6 +77,7 @@ static void volume_slider_cb(lv_event_t * e) {
     lv_obj_t * slider = lv_event_get_target(e);
     int v = lv_slider_get_value(slider);
     SystemManager::set_volume(v);
+    audio_hal_set_output_volume(v);
 }
 
 static void render_sound_tab() {
@@ -304,6 +308,73 @@ static void render_device_info_tab() {
 }
 
 // -----------------------------------------------------------------------------
+// Voice Model Tab
+// -----------------------------------------------------------------------------
+static void render_voice_tab() {
+    lv_obj_clean(content_area);
+
+    lv_obj_t * title = lv_label_create(content_area);
+    lv_label_set_text(title, "语音模型配置");
+    lv_obj_add_style(title, &style_text_title, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 40, 20);
+
+    lv_obj_t * card = lv_obj_create(content_area);
+    lv_obj_set_size(card, LV_PCT(90), 430);
+    lv_obj_align(card, LV_ALIGN_TOP_LEFT, 40, 80);
+    lv_obj_add_style(card, &style_card, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(card, 16, 0);
+
+    const char* labels[] = {"ASR 语音识别", "LLM 大模型",
+                            "TTS 语音合成", "端到端实时语音"};
+    voice_model_type_t types[] = {VOICE_MODEL_ASR, VOICE_MODEL_LLM,
+                                  VOICE_MODEL_TTS,
+                                  VOICE_MODEL_REALTIME};
+
+    for (int i = 0; i < 4; i++) {
+        const voice_model_config_t* cfg = credentials_get_voice_model_config(types[i]);
+
+        lv_obj_t* row = lv_obj_create(card);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(row, 4, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* lbl = lv_label_create(row);
+        char buf[384];
+        snprintf(buf, sizeof(buf), "%s: %s / %s", labels[i],
+                 cfg && cfg->provider[0] ? cfg->provider : "未配置",
+                 cfg && cfg->model[0] ? cfg->model : "--");
+        lv_label_set_text(lbl, buf);
+        lv_obj_set_style_text_font(lbl, font_cn_18, 0);
+        lv_obj_set_style_text_color(lbl, THEME_TEXT_MAIN, 0);
+
+        lv_obj_t* url_lbl = lv_label_create(row);
+        snprintf(buf, sizeof(buf), "URL: %s", cfg && cfg->url[0] ? cfg->url : "--");
+        lv_label_set_text(url_lbl, buf);
+        lv_obj_set_style_text_font(url_lbl, font_cn_16, 0);
+        lv_obj_set_style_text_color(url_lbl, THEME_TEXT_SUB, 0);
+    }
+
+    lv_obj_t* btn = lv_btn_create(content_area);
+    lv_obj_set_size(btn, 200, 50);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -40);
+    lv_obj_set_style_bg_color(btn, THEME_PRIMARY, 0);
+    lv_obj_add_event_cb(btn, [](lv_event_t*) {
+        voice_session_start(false);
+    }, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t* btn_lbl = lv_label_create(btn);
+    lv_label_set_text(btn_lbl, "打开语音助手");
+    lv_obj_set_style_text_color(btn_lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(btn_lbl, font_cn_18, 0);
+    lv_obj_align(btn_lbl, LV_ALIGN_CENTER, 0, 0);
+}
+
+// -----------------------------------------------------------------------------
 // About Tab
 // -----------------------------------------------------------------------------
 static void render_about_tab() {
@@ -338,8 +409,9 @@ static void sidebar_btn_event_cb(lv_event_t * e) {
     if (id == 0) render_wifi_tab();
     else if (id == 1) render_display_tab();
     else if (id == 2) render_sound_tab();
-    else if (id == 3) render_device_info_tab();
-    else if (id == 4) render_about_tab();
+    else if (id == 3) render_voice_tab();
+    else if (id == 4) render_device_info_tab();
+    else if (id == 5) render_about_tab();
 }
 
 lv_obj_t* app_settings_create(void) {
@@ -365,8 +437,8 @@ lv_obj_t* app_settings_create(void) {
     lv_obj_set_style_text_font(back_label, font_cn_18, 0);
     lv_obj_align(back_label, LV_ALIGN_CENTER, 0, 0);
 
-    const char * menus[] = {"Wi-Fi 设置", "显示设置", "声音设置", "设备信息", "关于"};
-    for(int i=0; i<5; i++) {
+    const char * menus[] = {"Wi-Fi 设置", "显示设置", "声音设置", "语音模型", "设备信息", "关于"};
+    for(int i=0; i<6; i++) {
         lv_obj_t * menu_btn = lv_btn_create(sidebar);
         lv_obj_set_size(menu_btn, LV_PCT(100), 50);
         lv_obj_align(menu_btn, LV_ALIGN_TOP_MID, 0, 80 + i * 60);
