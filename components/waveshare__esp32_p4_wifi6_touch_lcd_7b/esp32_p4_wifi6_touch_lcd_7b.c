@@ -199,6 +199,10 @@ esp_err_t bsp_audio_init(const i2s_std_config_t *i2s_config)
     /* Setup I2S peripheral */
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(CONFIG_BSP_I2S_NUM, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true; // Auto clear the legacy data in the DMA buffer
+    // The default dma_frame_num (240) produces a 480-byte mono-16bit DMA
+    // buffer, which is not aligned to 64 bytes and triggers an I2S driver
+    // adjustment warning. Use 256 frames -> 512 bytes to keep it aligned.
+    chan_cfg.dma_frame_num = 256;
     BSP_ERROR_CHECK_RETURN_ERR(i2s_new_channel(&chan_cfg, &i2s_tx_chan, &i2s_rx_chan));
 
     /* Setup I2S channels */

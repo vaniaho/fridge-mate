@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -20,6 +22,13 @@ extern "C" {
 esp_err_t rtc_time_init(void);
 
 /**
+ * @brief Trigger an immediate SNTP sync and wait for the result.
+ *
+ * This is safe to call multiple times after Wi-Fi becomes available.
+ */
+esp_err_t rtc_time_sync_now(uint32_t timeout_ms);
+
+/**
  * @brief 获取当前是否已完成至少一次 NTP 时间同步
  * @return true 已同步, false 尚未同步（系统时间可能不准确）
  */
@@ -30,6 +39,16 @@ bool rtc_time_is_synced(void);
  * 可在检测到时间偏差过大时调用
  */
 void rtc_time_force_sync(void);
+
+/**
+ * @brief Set system time from a local epoch timestamp.
+ */
+esp_err_t rtc_time_set_epoch(time_t epoch);
+
+/**
+ * @brief Set system time from "YYYY-MM-DD HH:MM:SS" or datetime-local text.
+ */
+esp_err_t rtc_time_set_datetime(const char *datetime);
 
 /**
  * @brief 获取格式化的当前时间字符串

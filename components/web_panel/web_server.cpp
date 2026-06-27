@@ -73,22 +73,29 @@ static void register_routes(httpd_handle_t server) {
 }
 
 extern "C" esp_err_t web_panel_start(void) {
+    if (http_server && https_server) {
+        ESP_LOGI(TAG, "Web panel already running");
+        return ESP_OK;
+    }
+
     httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
-    http_config.max_uri_handlers = 28;
+    http_config.max_uri_handlers = 36;
     http_config.stack_size = 16384;
     http_config.max_open_sockets = 3;
     http_config.lru_purge_enable = true;
 
-    ESP_LOGI(TAG, "Starting HTTP server on port %d",
-             http_config.server_port);
-    if (httpd_start(&http_server, &http_config) != ESP_OK) {
-        ESP_LOGE(TAG, "Error starting HTTP server");
-        return ESP_FAIL;
+    if (!http_server) {
+        ESP_LOGI(TAG, "Starting HTTP server on port %d",
+                 http_config.server_port);
+        if (httpd_start(&http_server, &http_config) != ESP_OK) {
+            ESP_LOGE(TAG, "Error starting HTTP server");
+            return ESP_FAIL;
+        }
+        register_routes(http_server);
     }
-    register_routes(http_server);
 
     httpd_ssl_config_t https_config = HTTPD_SSL_CONFIG_DEFAULT();
-    https_config.httpd.max_uri_handlers = 28;
+    https_config.httpd.max_uri_handlers = 36;
     https_config.httpd.stack_size = 16384;
     https_config.httpd.max_open_sockets = 2;
     https_config.httpd.lru_purge_enable = true;
@@ -99,16 +106,22 @@ extern "C" esp_err_t web_panel_start(void) {
     https_config.prvtkey_len =
         server_key_pem_end - server_key_pem_start;
 
-    ESP_LOGI(TAG, "Starting HTTPS server on port %d",
-             https_config.port_secure);
-    if (httpd_ssl_start(&https_server, &https_config) == ESP_OK) {
-        register_routes(https_server);
-        ESP_LOGI(TAG, "HTTPS voice capture endpoint ready");
-    } else {
-        ESP_LOGW(TAG,
-                 "HTTPS server unavailable; browser microphone requires HTTPS");
+    if (!https_server) {
+        ESP_LOGI(TAG, "Starting HTTPS server on port %d",
+                 https_config.port_secure);
+        if (httpd_ssl_start(&https_server, &https_config) == ESP_OK) {
+            register_routes(https_server);
+            ESP_LOGI(TAG, "HTTPS voice capture endpoint ready");
+        } else {
+            ESP_LOGW(TAG,
+                     "HTTPS server unavailable; browser microphone requires HTTPS");
+        }
     }
     return ESP_OK;
+}
+
+extern "C" bool web_panel_is_running(void) {
+    return http_server != NULL;
 }
 
 extern "C" void web_panel_broadcast_ws(const char* msg) {

@@ -4,6 +4,7 @@
 #include "gui_icons.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_lvgl_port.h"
@@ -67,28 +68,33 @@ static void create_splash_screen(void) {
 void gui_app_init(void) {
     ESP_LOGI(TAG, "GUI App Initializing...");
     gui_styles_init();
-    vTaskDelay(pdMS_TO_TICKS(1));
+    esp_task_wdt_reset();
+    vTaskDelay(1);
 
     // 1. Create and show Splash
     create_splash_screen();
     lv_scr_load(screen_splash);
     current_screen = screen_splash;
-    vTaskDelay(pdMS_TO_TICKS(1));
+    esp_task_wdt_reset();
+    vTaskDelay(1);
 
     // 2. Initialize Overlays
     gui_overlays_init();
-    vTaskDelay(pdMS_TO_TICKS(1));
+    esp_task_wdt_reset();
+    vTaskDelay(1);
 
     // 3. Initialize Launcher (kept in memory)
     screen_launcher = lv_obj_create(NULL);
     lv_obj_add_style(screen_launcher, &style_screen_bg, 0);
     gui_launcher_init(screen_launcher);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    esp_task_wdt_reset();
+    vTaskDelay(1);
 
     // 4. Initialize Standby
     screen_standby = lv_obj_create(NULL);
     gui_standby_init(screen_standby);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    esp_task_wdt_reset();
+    vTaskDelay(1);
 
     // Switch to Launcher
     lv_scr_load_anim(screen_launcher, LV_SCR_LOAD_ANIM_FADE_ON, 500, 1000, true);

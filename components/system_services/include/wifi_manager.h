@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -13,6 +15,7 @@ extern "C" {
  */
 bool wifi_init_sta(const char* ssid, const char* pass);
 void wifi_manager_disable_retry(void);
+bool wifi_manager_is_connected(void);
 
 /**
  * @brief 注销 boot 阶段注册的事件 handler

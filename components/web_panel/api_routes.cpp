@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <string>
 #include <string.h>
+#include <time.h>
 #include "inventory.hpp"
 
 static const char *TAG = "WebPanelApi";
@@ -368,6 +369,95 @@ static esp_err_t post_settings_handler(httpd_req_t *req) {
     cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"status\":\"ok\"}", -1);
+    return ESP_OK;
+}
+
+static void add_time_payload(cJSON* root) {
+    char time_buf[32] = {0};
+    time_t now = 0;
+    time(&now);
+    rtc_time_get_formatted(time_buf, sizeof(time_buf));
+
+    cJSON_AddBoolToObject(root, "synced", rtc_time_is_synced());
+    cJSON_AddStringToObject(root, "sys_time", time_buf);
+    cJSON_AddNumberToObject(root, "epoch", (double)now);
+    cJSON_AddStringToObject(root, "timezone", "CST-8");
+}
+
+// GET /api/time
+static esp_err_t get_time_handler(httpd_req_t *req) {
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "ok");
+    add_time_payload(root);
+
+    const char* json = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free((void*)json);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+// POST /api/time/sync
+static esp_err_t post_time_sync_handler(httpd_req_t *req) {
+    esp_err_t err = rtc_time_sync_now(30000);
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", err == ESP_OK ? "ok" : "error");
+    if (err != ESP_OK) {
+        cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+    }
+    add_time_payload(root);
+
+    const char* json = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free((void*)json);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+// POST /api/time
+static esp_err_t post_time_handler(httpd_req_t *req) {
+    char* body = receive_request_body(req, 256);
+    if (!body) {
+        return send_json_error(req, "400 Bad Request", "invalid_body",
+                               "Invalid time payload");
+    }
+
+    cJSON* root = cJSON_Parse(body);
+    free(body);
+    if (!root) {
+        return send_json_error(req, "400 Bad Request", "invalid_json",
+                               "Invalid JSON");
+    }
+
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    cJSON* epoch = cJSON_GetObjectItem(root, "epoch");
+    cJSON* datetime = cJSON_GetObjectItem(root, "datetime");
+    if (epoch && cJSON_IsNumber(epoch)) {
+        err = rtc_time_set_epoch((time_t)epoch->valuedouble);
+    } else if (datetime && cJSON_IsString(datetime) && datetime->valuestring) {
+        err = rtc_time_set_datetime(datetime->valuestring);
+    }
+    cJSON_Delete(root);
+
+    if (err != ESP_OK) {
+        return send_json_error(req, "400 Bad Request", "invalid_time",
+                               esp_err_to_name(err));
+    }
+
+    gui_bridge_refresh_dashboard();
+    web_panel_broadcast_ws("update");
+
+    cJSON* resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "status", "ok");
+    add_time_payload(resp);
+    const char* json = cJSON_PrintUnformatted(resp);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free((void*)json);
+    cJSON_Delete(resp);
     return ESP_OK;
 }
 
@@ -1028,6 +1118,9 @@ void register_api_routes(httpd_handle_t server) {
     httpd_uri_t uri_get_status = { .uri = "/api/status", .method = HTTP_GET, .handler = get_status_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_get_set = { .uri = "/api/settings", .method = HTTP_GET, .handler = get_settings_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_post_set = { .uri = "/api/settings", .method = HTTP_POST, .handler = post_settings_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_time = { .uri = "/api/time", .method = HTTP_GET, .handler = get_time_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_time = { .uri = "/api/time", .method = HTTP_POST, .handler = post_time_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_time_sync = { .uri = "/api/time/sync", .method = HTTP_POST, .handler = post_time_sync_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_post_chat = { .uri = "/api/chat", .method = HTTP_POST, .handler = post_chat_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_get_recipes = { .uri = "/api/recipes/match", .method = HTTP_GET, .handler = get_recipes_match_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_post_recipes = { .uri = "/api/recipes", .method = HTTP_POST, .handler = post_recipes_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
@@ -1048,6 +1141,9 @@ void register_api_routes(httpd_handle_t server) {
     httpd_register_uri_handler(server, &uri_get_status);
     httpd_register_uri_handler(server, &uri_get_set);
     httpd_register_uri_handler(server, &uri_post_set);
+    httpd_register_uri_handler(server, &uri_get_time);
+    httpd_register_uri_handler(server, &uri_post_time);
+    httpd_register_uri_handler(server, &uri_post_time_sync);
     httpd_register_uri_handler(server, &uri_post_chat);
     httpd_register_uri_handler(server, &uri_get_recipes);
     httpd_register_uri_handler(server, &uri_post_recipes);

@@ -22,6 +22,8 @@ enum class WifiStatus {
 
 class SystemManager {
 public:
+    using NetworkStateCallback = void (*)(bool connected);
+
     static void init();
 
     // WiFi
@@ -32,6 +34,7 @@ public:
     static WifiStatus get_wifi_status();
     static std::string get_wifi_ip();
     static std::string get_current_ssid();
+    static void set_network_state_callback(NetworkStateCallback callback);
 
     // Display
     static void set_brightness(int percent);
@@ -48,6 +51,7 @@ public:
 
 private:
     static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+    static void notify_network_state(bool connected);
     static void load_settings();
     static void save_settings();
     static int32_t current_brightness;
@@ -58,6 +62,7 @@ private:
     static std::vector<WifiNetwork> scanned_networks;
     static bool is_connecting_active;
     static int auto_reconnect_count;
+    static NetworkStateCallback network_state_callback;
 };
 
 } // namespace system

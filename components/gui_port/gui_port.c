@@ -83,16 +83,31 @@ esp_err_t gui_port_show_boot_screen(int brightness_percent) {
     lv_refr_now(s_display);
     lvgl_port_unlock();
 
-    // Give the DSI scan-out one frame to latch the completed buffer, then
-    // fade in gently instead of exposing the panel at full brightness.
-    vTaskDelay(pdMS_TO_TICKS(34));
-    const int steps = 6;
-    for (int step = 1; step <= steps; ++step) {
-        bsp_display_brightness_set(
-            (brightness_percent * step) / steps);
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-    ESP_LOGI(TAG, "Stable boot frame presented at %d%% brightness",
-             brightness_percent);
+    // Keep the panel dark. The CJK font load and desktop construction hold the
+    // LVGL mutex for many seconds; turning the backlight on now would make any
+    // DSI tear, partial render, or transition visible as severe flicker.
+    bsp_display_brightness_set(0);
+
+    ESP_LOGI(TAG, "Stable boot frame rendered (backlight off during init)");
     return ESP_OK;
+}
+
+void gui_port_brightness_set(int brightness_percent) {
+    if (brightness_percent < 0) brightness_percent = 0;
+    if (brightness_percent > 100) brightness_percent = 100;
+    bsp_display_brightness_set(brightness_percent);
+}
+
+void gui_port_brightness_fade_in(int brightness_percent, int duration_ms) {
+    if (brightness_percent < 5) brightness_percent = 5;
+    if (brightness_percent > 100) brightness_percent = 100;
+    if (duration_ms < 60) duration_ms = 60;
+
+    const int steps = 8;
+    const int step_ms = duration_ms / steps;
+    for (int step = 1; step <= steps; ++step) {
+        bsp_display_brightness_set((brightness_percent * step) / steps);
+        vTaskDelay(pdMS_TO_TICKS(step_ms));
+    }
+    ESP_LOGI(TAG, "Backlight faded in to %d%%", brightness_percent);
 }

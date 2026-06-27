@@ -12,13 +12,23 @@ extern "C" {
 void gui_port_init(void);
 
 /**
- * @brief Draw a stable built-in-font boot screen and then enable backlight.
+ * @brief Draw a stable built-in-font boot screen while keeping backlight off.
  *
- * This must be called after SystemManager has loaded the saved brightness.
- * The screen stays visible while the large CJK fonts and desktop widgets are
- * initialized.
+ * The panel is kept dark so the long CJK font load / desktop construction
+ * phase does not expose uninitialized or torn DSI frames. Call
+ * gui_port_brightness_fade_in() once the launcher is fully rendered.
  */
 esp_err_t gui_port_show_boot_screen(int brightness_percent);
+
+/**
+ * @brief Set display backlight to a fixed level (0-100).
+ */
+void gui_port_brightness_set(int brightness_percent);
+
+/**
+ * @brief Fade backlight from 0 up to the requested level.
+ */
+void gui_port_brightness_fade_in(int brightness_percent, int duration_ms);
 
 #ifdef __cplusplus
 }

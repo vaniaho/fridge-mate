@@ -162,7 +162,7 @@ void gui_launcher_init(lv_obj_t* parent) {
 
     // Create timer for clock update (every 1 second)
     lv_timer_create(clock_timer_cb, 1000, NULL);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(1);
 
     // ------------------------------------------------------------------------
     // 2. Left Column: Weather + Message Board
@@ -246,7 +246,7 @@ void gui_launcher_init(lv_obj_t* parent) {
     // Click empty area to refresh
     lv_obj_add_flag(msg_card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(msg_card, msg_card_click_cb, LV_EVENT_CLICKED, NULL);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(1);
 
     // ------------------------------------------------------------------------
     // 3. Right Column: App Grid
@@ -282,7 +282,7 @@ void gui_launcher_init(lv_obj_t* parent) {
         gui_icon_button_create(grid, apps[i].icon, apps[i].name,
                                apps[i].grad_start, apps[i].grad_end,
                                app_btn_event_cb, (void*)(intptr_t)apps[i].id);
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(1);
     }
 
     // ------------------------------------------------------------------------
@@ -330,7 +330,7 @@ void gui_launcher_init(lv_obj_t* parent) {
     lv_obj_set_style_text_font(banner_desc, font_cn_16, 0);
     lv_obj_set_style_text_color(banner_desc, lv_color_white(), 0);
     lv_obj_set_style_text_opa(banner_desc, LV_OPA_80, 0);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(1);
 
     // No entrance animation to keep Launcher snappy
 }

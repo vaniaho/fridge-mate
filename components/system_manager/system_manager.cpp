@@ -9,6 +9,7 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_mac.h"
+#include <stdio.h>
 
 extern "C" {
 #include "credentials_manager.h"
@@ -29,14 +30,31 @@ std::string SystemManager::current_ip = "";
 std::vector<WifiNetwork> SystemManager::scanned_networks;
 bool SystemManager::is_connecting_active = false;
 int SystemManager::auto_reconnect_count = 0;
+SystemManager::NetworkStateCallback SystemManager::network_state_callback = nullptr;
+
+void SystemManager::notify_network_state(bool connected) {
+    if (SystemManager::network_state_callback) {
+        SystemManager::network_state_callback(connected);
+    }
+}
 
 void SystemManager::wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         // Wi-Fi started, can connect now
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+        wifi_status = WifiStatus::CONNECTING;
+        wifi_event_sta_connected_t* event = (wifi_event_sta_connected_t*)event_data;
+        if (event && event->ssid[0] != '\0') {
+            current_ssid = std::string((char*)event->ssid, event->ssid_len);
+        }
+    } else if (event_base == WIFI_EVENT &&
+               (event_id == WIFI_EVENT_STA_DISCONNECTED ||
+                event_id == WIFI_EVENT_STA_STOP)) {
         wifi_status = WifiStatus::DISCONNECTED;
-        current_ip = "";
+        current_ip.clear();
+        current_ssid.clear();
         gui_app_set_wifi_status(false);
+        SystemManager::notify_network_state(false);
 
         if (is_connecting_active) {
             ESP_LOGW(TAG, "Wi-Fi connection attempt failed or interrupted. Stopping retries.");
@@ -53,7 +71,7 @@ void SystemManager::wifi_event_handler(void* arg, esp_event_base_t event_base, i
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         char ip_str[32];
-        sprintf(ip_str, IPSTR, IP2STR(&event->ip_info.ip));
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
         current_ip = std::string(ip_str);
         wifi_status = WifiStatus::CONNECTED;
         is_connecting_active = false;
@@ -66,6 +84,12 @@ void SystemManager::wifi_event_handler(void* arg, esp_event_base_t event_base, i
 
         ESP_LOGI(TAG, "Got IP: %s (SSID: %s)", current_ip.c_str(), current_ssid.c_str());
         gui_app_set_wifi_status(true);
+        SystemManager::notify_network_state(true);
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
+        wifi_status = WifiStatus::DISCONNECTED;
+        current_ip.clear();
+        gui_app_set_wifi_status(false);
+        SystemManager::notify_network_state(false);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
         uint16_t ap_count = 0;
         esp_wifi_scan_get_ap_num(&ap_count);
@@ -98,6 +122,8 @@ void SystemManager::wifi_event_handler(void* arg, esp_event_base_t event_base, i
 }
 
 void SystemManager::init() {
+    const bool boot_wifi_connected = wifi_manager_is_connected();
+
     wifi_manager_disable_retry();      // 禁用 boot 阶段的重试逻辑
     wifi_manager_unregister_handlers(); // 注销 boot 阶段的事件 handler，避免与 SystemManager 重复处理
     load_settings();
@@ -112,22 +138,32 @@ void SystemManager::init() {
 
     // Register our own handler to listen for scan results and IP events
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
 
-    // Get current IP if already connected (since Phase 3 might have connected before Phase 5)
-    esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (netif) {
-        esp_netif_ip_info_t ip_info;
-        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+    if (boot_wifi_connected) {
+        esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        esp_netif_ip_info_t ip_info = {};
+        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK &&
+            ip_info.ip.addr != 0) {
             char ip_str[32];
-            sprintf(ip_str, IPSTR, IP2STR(&ip_info.ip));
+            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
             current_ip = std::string(ip_str);
-            wifi_status = WifiStatus::CONNECTED;
-            
+
             wifi_config_t wifi_config = {};
-            esp_wifi_get_config(WIFI_IF_STA, &wifi_config);
-            current_ssid = std::string((char*)wifi_config.sta.ssid);
+            if (esp_wifi_get_config(WIFI_IF_STA, &wifi_config) == ESP_OK) {
+                current_ssid = std::string((char*)wifi_config.sta.ssid);
+            }
+
+            wifi_status = WifiStatus::CONNECTED;
+            gui_app_set_wifi_status(true);
+            SystemManager::notify_network_state(true);
         }
+    } else {
+        wifi_status = WifiStatus::DISCONNECTED;
+        current_ip.clear();
+        current_ssid.clear();
+        gui_app_set_wifi_status(false);
+        SystemManager::notify_network_state(false);
     }
 
     // The BSP already owns and initializes the backlight LEDC channel while
@@ -196,7 +232,9 @@ void SystemManager::connect_wifi(const std::string& ssid, const std::string& pas
     
     wifi_status = WifiStatus::CONNECTING;
     current_ssid = ssid;
-    is_connecting_active = true;
+    current_ip.clear();
+    is_connecting_active = false;
+    auto_reconnect_count = 0;
 
     ESP_LOGI(TAG, "UI requested Wi-Fi connection. Target SSID: %s", ssid.c_str());
 
@@ -211,6 +249,7 @@ void SystemManager::connect_wifi(const std::string& ssid, const std::string& pas
         return;
     }
 
+    is_connecting_active = true;
     err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start wifi connection: %s", esp_err_to_name(err));
@@ -233,6 +272,13 @@ std::string SystemManager::get_wifi_ip() {
 
 std::string SystemManager::get_current_ssid() {
     return current_ssid;
+}
+
+void SystemManager::set_network_state_callback(NetworkStateCallback callback) {
+    network_state_callback = callback;
+    if (network_state_callback) {
+        network_state_callback(wifi_status == WifiStatus::CONNECTED);
+    }
 }
 
 void SystemManager::set_brightness(int percent) {

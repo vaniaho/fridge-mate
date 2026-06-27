@@ -6,9 +6,15 @@
 #include "gui_icons.h"
 #include "system_manager.hpp"
 #include "credentials_manager.h"
+#include "rtc_time.h"
 #include "audio_api.h"
 #include "system_events.h"
+#include "esp_err.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 using namespace smart_fridge::system;
@@ -21,8 +27,15 @@ static lv_obj_t * pwd_card = NULL;
 static std::string selected_ssid = "";
 static lv_obj_t * kb = NULL;
 static lv_obj_t * wifi_status_lbl = NULL;
+static lv_timer_t * time_timer = NULL;
+static lv_obj_t * time_status_lbl = NULL;
+static lv_obj_t * time_value_lbl = NULL;
+static lv_obj_t * time_input_ta = NULL;
+static volatile bool time_sync_in_progress = false;
 
-static void back_btn_event_cb(lv_event_t * e) {
+static const char *TAG = "AppSettings";
+
+static void cleanup_active_tab() {
     if (kb) {
         lv_obj_del(kb);
         kb = NULL;
@@ -32,6 +45,17 @@ static void back_btn_event_cb(lv_event_t * e) {
         wifi_timer = NULL;
         wifi_status_lbl = NULL;
     }
+    if (time_timer) {
+        lv_timer_del(time_timer);
+        time_timer = NULL;
+        time_status_lbl = NULL;
+        time_value_lbl = NULL;
+        time_input_ta = NULL;
+    }
+}
+
+static void back_btn_event_cb(lv_event_t * e) {
+    cleanup_active_tab();
     gui_app_navigate_to(GUI_APP_LAUNCHER);
 }
 
@@ -275,6 +299,176 @@ static void render_wifi_tab() {
 }
 
 // -----------------------------------------------------------------------------
+// Time Tab
+// -----------------------------------------------------------------------------
+static void update_time_labels() {
+    if (!time_status_lbl || !time_value_lbl) {
+        return;
+    }
+
+    char buf[32];
+    rtc_time_get_formatted(buf, sizeof(buf));
+    lv_label_set_text_fmt(time_value_lbl, "当前时间: %s", buf);
+
+    if (rtc_time_is_synced()) {
+        lv_label_set_text(time_status_lbl, "状态: 已同步");
+        lv_obj_set_style_text_color(time_status_lbl, THEME_SUCCESS, 0);
+    } else {
+        lv_label_set_text(time_status_lbl, "状态: 未同步");
+        lv_obj_set_style_text_color(time_status_lbl, THEME_WARNING, 0);
+    }
+}
+
+static void time_timer_handler(lv_timer_t * timer) {
+    (void)timer;
+    update_time_labels();
+}
+
+typedef struct {
+    esp_err_t err;
+} time_sync_result_t;
+
+static void time_sync_done_async(void *arg) {
+    time_sync_result_t *result = (time_sync_result_t*)arg;
+    time_sync_in_progress = false;
+    update_time_labels();
+
+    if (result && result->err != ESP_OK && time_status_lbl) {
+        lv_label_set_text_fmt(time_status_lbl, "状态: 同步失败 (%s)",
+                              esp_err_to_name(result->err));
+        lv_obj_set_style_text_color(time_status_lbl, THEME_DANGER, 0);
+    }
+
+    free(result);
+}
+
+static void time_sync_task(void *arg) {
+    (void)arg;
+    esp_err_t err = rtc_time_sync_now(30000);
+    time_sync_result_t *result =
+        (time_sync_result_t*)malloc(sizeof(time_sync_result_t));
+    if (result) {
+        result->err = err;
+        lv_async_call(time_sync_done_async, result);
+    } else {
+        ESP_LOGE(TAG, "Failed to allocate time sync result");
+        time_sync_in_progress = false;
+    }
+    vTaskDelete(NULL);
+}
+
+static void time_sync_btn_cb(lv_event_t * e) {
+    (void)e;
+    if (time_sync_in_progress) {
+        return;
+    }
+
+    time_sync_in_progress = true;
+    if (time_status_lbl) {
+        lv_label_set_text(time_status_lbl, "状态: 同步中...");
+        lv_obj_set_style_text_color(time_status_lbl, THEME_WARNING, 0);
+    }
+
+    if (xTaskCreate(time_sync_task, "time_sync_ui", 6144, NULL, 4, NULL) !=
+        pdPASS) {
+        time_sync_in_progress = false;
+        if (time_status_lbl) {
+            lv_label_set_text(time_status_lbl, "状态: 无法启动同步任务");
+            lv_obj_set_style_text_color(time_status_lbl, THEME_DANGER, 0);
+        }
+    }
+}
+
+static void time_set_btn_cb(lv_event_t * e) {
+    (void)e;
+    if (!time_input_ta) {
+        return;
+    }
+
+    const char *text = lv_textarea_get_text(time_input_ta);
+    esp_err_t err = rtc_time_set_datetime(text);
+    update_time_labels();
+
+    if (time_status_lbl) {
+        if (err == ESP_OK) {
+            lv_label_set_text(time_status_lbl, "状态: 已手动设置");
+            lv_obj_set_style_text_color(time_status_lbl, THEME_SUCCESS, 0);
+        } else {
+            lv_label_set_text(time_status_lbl,
+                              "状态: 时间格式无效，请用 YYYY-MM-DD HH:MM:SS");
+            lv_obj_set_style_text_color(time_status_lbl, THEME_DANGER, 0);
+        }
+    }
+
+    if (kb) {
+        lv_obj_del(kb);
+        kb = NULL;
+    }
+}
+
+static void render_time_tab() {
+    lv_obj_clean(content_area);
+
+    lv_obj_t * title = lv_label_create(content_area);
+    lv_label_set_text(title, "时间日期设置");
+    lv_obj_add_style(title, &style_text_title, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 40, 20);
+
+    lv_obj_t * card = lv_obj_create(content_area);
+    lv_obj_set_size(card, LV_PCT(90), 300);
+    lv_obj_align(card, LV_ALIGN_TOP_LEFT, 40, 80);
+    lv_obj_add_style(card, &style_card, 0);
+
+    time_status_lbl = lv_label_create(card);
+    lv_obj_add_style(time_status_lbl, &style_text_main, 0);
+    lv_obj_align(time_status_lbl, LV_ALIGN_TOP_LEFT, 20, 20);
+
+    time_value_lbl = lv_label_create(card);
+    lv_obj_add_style(time_value_lbl, &style_text_main, 0);
+    lv_obj_align(time_value_lbl, LV_ALIGN_TOP_LEFT, 20, 60);
+
+    lv_obj_t * sync_btn = lv_btn_create(card);
+    lv_obj_set_size(sync_btn, 220, 44);
+    lv_obj_align(sync_btn, LV_ALIGN_TOP_LEFT, 20, 110);
+    lv_obj_set_style_bg_color(sync_btn, THEME_PRIMARY, 0);
+    lv_obj_add_event_cb(sync_btn, time_sync_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * sync_lbl = lv_label_create(sync_btn);
+    lv_label_set_text(sync_lbl, "立即同步网络时间");
+    lv_obj_set_style_text_color(sync_lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(sync_lbl, font_cn_18, 0);
+    lv_obj_align(sync_lbl, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t * input_lbl = lv_label_create(card);
+    lv_label_set_text(input_lbl, "手动设置时间");
+    lv_obj_add_style(input_lbl, &style_text_sub, 0);
+    lv_obj_align(input_lbl, LV_ALIGN_TOP_LEFT, 20, 175);
+
+    time_input_ta = lv_textarea_create(card);
+    lv_textarea_set_one_line(time_input_ta, true);
+    lv_textarea_set_placeholder_text(time_input_ta, "YYYY-MM-DD HH:MM:SS");
+    lv_obj_set_size(time_input_ta, 300, 44);
+    lv_obj_align(time_input_ta, LV_ALIGN_TOP_LEFT, 20, 205);
+    lv_obj_add_event_cb(time_input_ta, ta_event_cb, LV_EVENT_ALL, NULL);
+
+    lv_obj_t * set_btn = lv_btn_create(card);
+    lv_obj_set_size(set_btn, 120, 44);
+    lv_obj_align_to(set_btn, time_input_ta, LV_ALIGN_OUT_RIGHT_MID, 16, 0);
+    lv_obj_set_style_bg_color(set_btn, THEME_PRIMARY, 0);
+    lv_obj_add_event_cb(set_btn, time_set_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * set_lbl = lv_label_create(set_btn);
+    lv_label_set_text(set_lbl, "设置");
+    lv_obj_set_style_text_color(set_lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(set_lbl, font_cn_18, 0);
+    lv_obj_align(set_lbl, LV_ALIGN_CENTER, 0, 0);
+
+    update_time_labels();
+    if (time_timer) lv_timer_del(time_timer);
+    time_timer = lv_timer_create(time_timer_handler, 1000, NULL);
+}
+
+// -----------------------------------------------------------------------------
 // Device Info Tab
 // -----------------------------------------------------------------------------
 static void render_device_info_tab() {
@@ -399,19 +593,16 @@ static void render_about_tab() {
 
 
 static void sidebar_btn_event_cb(lv_event_t * e) {
-    if (wifi_timer) {
-        lv_timer_del(wifi_timer);
-        wifi_timer = NULL;
-        wifi_status_lbl = NULL;
-    }
+    cleanup_active_tab();
     
     int id = (int)(intptr_t)lv_event_get_user_data(e);
     if (id == 0) render_wifi_tab();
     else if (id == 1) render_display_tab();
     else if (id == 2) render_sound_tab();
     else if (id == 3) render_voice_tab();
-    else if (id == 4) render_device_info_tab();
-    else if (id == 5) render_about_tab();
+    else if (id == 4) render_time_tab();
+    else if (id == 5) render_device_info_tab();
+    else if (id == 6) render_about_tab();
 }
 
 lv_obj_t* app_settings_create(void) {
@@ -438,7 +629,7 @@ lv_obj_t* app_settings_create(void) {
     lv_obj_align(back_label, LV_ALIGN_CENTER, 0, 0);
 
     const char * menus[] = {"Wi-Fi 设置", "显示设置", "声音设置", "语音模型", "设备信息", "关于"};
-    for(int i=0; i<6; i++) {
+    for(int i=0; i<7; i++) {
         lv_obj_t * menu_btn = lv_btn_create(sidebar);
         lv_obj_set_size(menu_btn, LV_PCT(100), 50);
         lv_obj_align(menu_btn, LV_ALIGN_TOP_MID, 0, 80 + i * 60);
@@ -447,7 +638,9 @@ lv_obj_t* app_settings_create(void) {
         lv_obj_add_event_cb(menu_btn, sidebar_btn_event_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
 
         lv_obj_t * label = lv_label_create(menu_btn);
-        lv_label_set_text(label, menus[i]);
+        const char *menu_text = (i == 4) ? "时间日期" :
+                                (i < 4 ? menus[i] : menus[i - 1]);
+        lv_label_set_text(label, menu_text);
         lv_obj_set_style_text_color(label, THEME_TEXT_MAIN, 0);
         lv_obj_set_style_text_font(label, font_cn_18, 0);
         lv_obj_align(label, LV_ALIGN_LEFT_MID, 20, 0);

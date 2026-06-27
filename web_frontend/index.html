@@ -323,6 +323,32 @@
                 </div>
 
                 <div class="settings-form glass-panel-inner" style="margin-top: 24px;">
+                    <h3>时间日期设置</h3>
+                    <div class="time-status-card">
+                        <div>
+                            <label>同步状态</label>
+                            <strong id="time-status">--</strong>
+                        </div>
+                        <div>
+                            <label>当前时间</label>
+                            <strong id="time-current">--</strong>
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-primary" id="time-sync-btn">立即同步网络时间</button>
+                    </div>
+                    <form id="time-set-form" style="margin-top: 16px;">
+                        <div class="input-group">
+                            <label>手动设置日期时间</label>
+                            <input type="datetime-local" id="time-input">
+                        </div>
+                        <div class="modal-actions">
+                            <button type="submit" class="btn">设置系统时间</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="settings-form glass-panel-inner" style="margin-top: 24px;">
                     <form id="weather-form">
                         <h3>天气 API 配置</h3>
                         <div class="input-group">

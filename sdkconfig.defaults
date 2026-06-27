@@ -1,5 +1,10 @@
 CONFIG_IDF_TARGET="esp32p4"
 
+# ESP32-P4 second-stage bootloader starts at 0x2000 (first 0x2000 bytes are
+# reserved for the key manager / flash-encryption metadata). If the ROM prints
+# "invalid header" it usually means the bootloader was not written to this offset.
+CONFIG_BOOTLOADER_OFFSET_IN_FLASH=0x2000
+
 # Flash Size (32MB)
 CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="32MB"
@@ -59,9 +64,18 @@ CONFIG_LV_FREETYPE_CACHE_FT_SIZES=2
 # Use ESP-IDF malloc for LVGL to utilize PSRAM
 CONFIG_LV_MEM_CUSTOM=y
 
+# FreeRTOS tick rate: 1000 Hz gives 1 ms resolution for LVGL animations/touch
+# and makes pdMS_TO_TICKS(1) actually yield in vTaskDelay.
+CONFIG_FREERTOS_HZ=1000
+
 # GUI creation performs synchronous FreeType CJK auto-hinting in app_main.
 # 24 KB is large enough for that call chain while still fitting internal SRAM.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=24576
+
+# CJK font cache/render can keep the main task busy for several seconds during
+# startup. Give the task watchdog a longer leash so a single FreeType render
+# pass does not trigger a system reset.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
 
 # ESP-Hosted SDIO for ESP32-C6 co-processor (Waveshare board)
 CONFIG_ESP_WIFI_REMOTE_ENABLED=y

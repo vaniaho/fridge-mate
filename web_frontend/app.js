@@ -51,6 +51,11 @@ let voiceActive = false;
 
 // Settings
 const settingsForm = document.getElementById('settings-form');
+const timeStatus = document.getElementById('time-status');
+const timeCurrent = document.getElementById('time-current');
+const timeInput = document.getElementById('time-input');
+const timeSyncBtn = document.getElementById('time-sync-btn');
+const timeSetForm = document.getElementById('time-set-form');
 
 // Recipes
 const recipeContainer = document.getElementById('recipe-container');
@@ -662,7 +667,36 @@ async function fetchSettings() {
         const data = await res.json();
         document.getElementById('set-ssid').value = data.wifi_ssid || '';
         document.getElementById('set-pass').value = data.wifi_pass || '';
+        fetchTimeSettings();
     } catch(e) { console.error(e); }
+}
+
+function fillTimePanel(data) {
+    if (!data) return;
+    if (timeStatus) {
+        timeStatus.textContent = data.synced ? '已同步' : '未同步';
+        timeStatus.style.color = data.synced ? 'inherit' : '#ff6b6b';
+    }
+    if (timeCurrent) {
+        timeCurrent.textContent = data.sys_time || '--';
+    }
+    if (sysTime && data.sys_time) {
+        sysTime.textContent = data.sys_time.split(' ')[1] || data.sys_time;
+        sysTime.style.color = data.synced ? 'inherit' : '#ff6b6b';
+    }
+}
+
+async function fetchTimeSettings() {
+    try {
+        const res = await fetch('/api/time');
+        const data = await res.json();
+        fillTimePanel(data);
+    } catch(e) { console.error(e); }
+}
+
+function datetimeLocalToPayload(value) {
+    if (!value) return '';
+    return value.length === 16 ? value + ':00' : value;
 }
 
 settingsForm.addEventListener('submit', async (e) => {
@@ -684,6 +718,53 @@ settingsForm.addEventListener('submit', async (e) => {
         }
     } catch(e) { alert('网络错误'); }
 });
+
+if (timeSyncBtn) {
+    timeSyncBtn.addEventListener('click', async () => {
+        timeSyncBtn.disabled = true;
+        const oldText = timeSyncBtn.textContent;
+        timeSyncBtn.textContent = '同步中...';
+        try {
+            const res = await fetch('/api/time/sync', { method: 'POST' });
+            const data = await res.json();
+            fillTimePanel(data);
+            if (data.status !== 'ok') {
+                alert('时间同步失败：' + (data.error || '未知错误'));
+            }
+        } catch(e) {
+            alert('时间同步请求失败');
+        }
+        timeSyncBtn.disabled = false;
+        timeSyncBtn.textContent = oldText;
+    });
+}
+
+if (timeSetForm) {
+    timeSetForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const datetime = datetimeLocalToPayload(timeInput ? timeInput.value : '');
+        if (!datetime) {
+            alert('请选择日期和时间');
+            return;
+        }
+        try {
+            const res = await fetch('/api/time', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ datetime })
+            });
+            const data = await res.json();
+            fillTimePanel(data);
+            if (res.ok && data.status === 'ok') {
+                alert('系统时间已更新');
+            } else {
+                alert('设置时间失败：' + (data.error || '无效时间'));
+            }
+        } catch(e) {
+            alert('设置时间请求失败');
+        }
+    });
+}
 
 // === Global Listeners & WS ===
 function setupEventListeners() {

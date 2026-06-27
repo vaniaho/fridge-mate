@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "nvs_flash.h"
 #include "inventory.hpp"
 #include "recipe_matcher.hpp"
@@ -34,6 +35,57 @@ static const char *TAG = "SmartFridge";
 // 系统状态标志
 static bool s_network_ok = false;
 static bool s_db_ok = false;
+static volatile bool s_network_recovery_running = false;
+
+static void network_recovery_task(void *pvParameters) {
+    (void)pvParameters;
+
+    ESP_LOGI(TAG, "[Network] Online. Restoring network services...");
+    s_network_ok = true;
+
+    if (web_panel_start() == ESP_OK) {
+        ESP_LOGI(TAG, "[Network] Web panel is available.");
+    } else {
+        ESP_LOGE(TAG, "[Network] Failed to start Web panel.");
+    }
+
+    if (!rtc_time_is_synced()) {
+        ESP_LOGI(TAG, "[Network] Syncing time after Wi-Fi connection...");
+        esp_err_t err = rtc_time_sync_now(30000);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "[Network] Time sync failed: %s",
+                     esp_err_to_name(err));
+        }
+    }
+
+    gui_bridge_refresh_dashboard();
+    web_panel_broadcast_ws("update");
+
+    s_network_recovery_running = false;
+    vTaskDelete(NULL);
+}
+
+static void network_state_changed_cb(bool connected) {
+    if (!connected) {
+        s_network_ok = false;
+        gui_app_set_wifi_status(false);
+        return;
+    }
+
+    s_network_ok = true;
+    gui_app_set_wifi_status(true);
+
+    if (s_network_recovery_running) {
+        return;
+    }
+
+    s_network_recovery_running = true;
+    if (xTaskCreate(network_recovery_task, "net_recover", 8192, NULL, 4,
+                    NULL) != pdPASS) {
+        ESP_LOGE(TAG, "[Network] Failed to create recovery task");
+        s_network_recovery_running = false;
+    }
+}
 
 // ============================================================
 // 周期性临期检查任务
@@ -296,10 +348,19 @@ extern "C" void app_main(void) {
     lvgl_port_lock(0);
     gui_app_init();
     lvgl_port_unlock();
+
+    // The launcher is now fully rendered. Fade the backlight in smoothly so the
+    // user sees a stable desktop instead of the torn/uninitialized frames that
+    // can occur while the CJK fonts were loading with the panel lit.
+    gui_port_brightness_fade_in(
+        smart_fridge::system::SystemManager::get_brightness(), 240);
+
     gui_bridge_init();
 
     // 注册 dashboard 刷新回调：天气刷新成功后通知 GUI 更新桌面天气卡片
     dashboard_set_refresh_callback(gui_bridge_refresh_dashboard);
+    smart_fridge::system::SystemManager::set_network_state_callback(
+        network_state_changed_cb);
 
     // 更新 GUI 中的 WiFi 图标状态
     gui_app_set_wifi_status(s_network_ok);
@@ -395,6 +456,14 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "   - 触屏: 触摸屏操作 (待A接入)       ");
     ESP_LOGI(TAG, "   - Web:  手机浏览器访问控制面板      ");
     ESP_LOGI(TAG, "======================================");
+
+    // Unsubscribe the main task from the task watchdog before returning.
+    // ESP-IDF normally deletes this task after app_main returns; explicitly
+    // removing it prevents stale WDT entries from triggering spurious reports
+    // once the GUI is running and the main task is no longer active.
+    if (esp_task_wdt_status(NULL) == ESP_OK) {
+        esp_task_wdt_delete(NULL);
+    }
 
     // 主任务保持存活，FreeRTOS 任务负责实际工作
     // event bus / web panel / expiry checker 均在独立任务中运行

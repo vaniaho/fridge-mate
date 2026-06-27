@@ -5,6 +5,7 @@
 #include "gui_components.h"
 #include "gui_icons.h"
 #include "inventory.hpp"
+#include "rtc_time.h"
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -138,6 +139,7 @@ static void create_ingredient_detail_popup(const std::string& name) {
     lv_obj_align(batch_list, LV_ALIGN_TOP_MID, 0, 120);
     lv_obj_set_flex_flow(batch_list, LV_FLEX_FLOW_COLUMN);
     
+    const bool time_synced = rtc_time_is_synced();
     time_t now;
     time(&now);
 
@@ -149,13 +151,18 @@ static void create_ingredient_detail_popup(const std::string& name) {
         lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
         
         lv_obj_t * batch_lbl = lv_label_create(item);
-        double remaining = difftime(batch.expire_time, now) / (24.0 * 3600.0);
-        lv_label_set_text_fmt(batch_lbl, "数量: %d | 剩余: %d 天", batch.quantity, (int)remaining);
+        double remaining = 0.0;
+        if (time_synced) {
+            remaining = difftime(batch.expire_time, now) / (24.0 * 3600.0);
+            lv_label_set_text_fmt(batch_lbl, "数量: %d | 剩余: %d 天", batch.quantity, (int)remaining);
+        } else {
+            lv_label_set_text_fmt(batch_lbl, "数量: %d | 剩余: 待同步", batch.quantity);
+        }
         lv_obj_set_style_text_font(batch_lbl, font_cn_16, 0);
         lv_obj_align(batch_lbl, LV_ALIGN_LEFT_MID, 10, 0);
 
-        if (remaining < 0) lv_obj_set_style_text_color(batch_lbl, THEME_DANGER, 0);
-        else if (remaining <= 3.0) lv_obj_set_style_text_color(batch_lbl, THEME_WARNING, 0);
+        if (time_synced && remaining < 0) lv_obj_set_style_text_color(batch_lbl, THEME_DANGER, 0);
+        else if (time_synced && remaining <= 3.0) lv_obj_set_style_text_color(batch_lbl, THEME_WARNING, 0);
     }
 
     if (p_item->batches.empty()) {
@@ -246,6 +253,7 @@ static void render_inventory_items(int filter_mode) {
     lv_obj_clean(content_area);
 
     auto items = smart_fridge::inventory::get_all_ingredients();
+    const bool time_synced = rtc_time_is_synced();
     time_t now;
     time(&now);
 
@@ -253,13 +261,17 @@ static void render_inventory_items(int filter_mode) {
 
     for (const auto& item : items) {
         // 取最早过期的批次来计算剩余天数（batches 按存入时间排序，但最早存入 ≠ 最早过期）
-        double remaining = 9999.0;
-        for (const auto& batch : item.batches) {
-            double r = difftime(batch.expire_time, now) / (24.0 * 3600.0);
-            if (r < remaining) remaining = r;
+        const bool has_batches = !item.batches.empty();
+        double remaining = 0.0;
+        if (time_synced && has_batches) {
+            remaining = 9999.0;
+            for (const auto& batch : item.batches) {
+                double r = difftime(batch.expire_time, now) / (24.0 * 3600.0);
+                if (r < remaining) remaining = r;
+            }
         }
 
-        if (filter_mode == 1 && remaining > 3.0) continue; // Expiring soon
+        if (filter_mode == 1 && (!time_synced || !has_batches || remaining > 3.0)) continue; // Expiring soon
         if (filter_mode == 2 && item.category != "水果") continue; // Fruits
         if (filter_mode == 3 && item.category != "蔬菜") continue; // Veggies
         if (filter_mode == 4 && item.category == "水果") continue; // Other
@@ -273,7 +285,7 @@ static void render_inventory_items(int filter_mode) {
         lv_obj_set_style_pad_all(card, 12, 0);
         lv_obj_add_event_cb(card, card_click_cb, LV_EVENT_ALL, strdup(item.name.c_str()));
 
-        if (filter_mode == 1 || remaining <= 3.0) {
+        if (time_synced && has_batches && (filter_mode == 1 || remaining <= 3.0)) {
             lv_obj_set_style_border_width(card, 2, 0);
             lv_obj_set_style_border_color(card, remaining < 0 ? THEME_DANGER : THEME_WARNING, 0);
         }
@@ -302,7 +314,13 @@ static void render_inventory_items(int filter_mode) {
 
         // Suggestion
         lv_obj_t * suggestion = lv_label_create(card);
-        if (remaining < 0) {
+        if (!has_batches) {
+            lv_label_set_text(suggestion, "暂无批次信息");
+            lv_obj_set_style_text_color(suggestion, THEME_TEXT_SUB, 0);
+        } else if (!time_synced) {
+            lv_label_set_text(suggestion, "时间未同步");
+            lv_obj_set_style_text_color(suggestion, THEME_TEXT_SUB, 0);
+        } else if (remaining < 0) {
             lv_label_set_text(suggestion, "尽快食用！");
             lv_obj_set_style_text_color(suggestion, THEME_DANGER, 0);
         } else if (remaining <= 3.0) {

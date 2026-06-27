@@ -1,6 +1,7 @@
 #include "gui_theme.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <stdio.h>
@@ -44,8 +45,9 @@ static bool load_ttf_to_psram(const char *path, void **mem_out, size_t *size_out
     }
 
     // Large single fread calls can keep CPU0 busy long enough to starve its
-    // idle task. Read in chunks and yield so the task watchdog remains healthy.
-    const size_t chunk_size = 64 * 1024;
+    // idle task. Read in smaller chunks, explicitly reset the task watchdog
+    // and yield so the watchdog remains healthy during multi-megabyte loads.
+    const size_t chunk_size = 16 * 1024;
     size_t total = 0;
     while (total < *size_out) {
         const size_t requested =
@@ -63,7 +65,11 @@ static bool load_ttf_to_psram(const char *path, void **mem_out, size_t *size_out
             return false;
         }
         total += read;
-        vTaskDelay(pdMS_TO_TICKS(1));
+        esp_task_wdt_reset();
+        // Use vTaskDelay(1) instead of pdMS_TO_TICKS(2): at the project tick
+        // rate this guarantees at least one tick yield, letting IDLE feed its
+        // watchdog and LVGL refresh during multi-megabyte loads.
+        vTaskDelay(1);
     }
 
     ESP_LOGI(TAG, "Cached %s into PSRAM (%u bytes)", path,
@@ -86,11 +92,19 @@ static void init_freetype_font(const char *path, void *mem, size_t mem_size,
     } else {
         ESP_LOGE(TAG, "Failed to load font %s at weight %u", path, weight);
     }
-    vTaskDelay(pdMS_TO_TICKS(1));
+    esp_task_wdt_reset();
+    vTaskDelay(1);
 }
 #endif
 
 void gui_theme_init(void) {
+    // The main task is not always subscribed to the task watchdog by default.
+    // Ensure it is before the long-running FreeType init, otherwise the
+    // esp_task_wdt_reset() calls made during font loading will fail.
+    if (esp_task_wdt_status(NULL) == ESP_ERR_NOT_FOUND) {
+        esp_task_wdt_add(NULL);
+    }
+
 #if LV_USE_FREETYPE
     ESP_LOGI(TAG, "Initializing FreeType fonts...");
     if (lv_freetype_init(64, 8, 0)) {
