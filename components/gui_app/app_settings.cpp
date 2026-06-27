@@ -139,7 +139,6 @@ static void ta_event_cb(lv_event_t * e) {
     if(code == LV_EVENT_FOCUSED) {
         if(kb == NULL) {
             kb = lv_keyboard_create(lv_scr_act());
-            lv_obj_set_style_text_font(kb, font_cn_18, 0);
             lv_obj_move_foreground(kb);
         }
         lv_keyboard_set_textarea(kb, ta);
@@ -190,6 +189,17 @@ static void wifi_item_delete_cb(lv_event_t * e) {
 static void wifi_timer_handler(lv_timer_t * timer) {
     if (wifi_status_lbl) {
         WifiStatus s = SystemManager::get_wifi_status();
+        
+        static WifiStatus prev_wifi_status = WifiStatus::DISCONNECTED;
+        if (prev_wifi_status == WifiStatus::CONNECTING && s == WifiStatus::CONNECTED) {
+            lv_obj_t * mbox = lv_msgbox_create(NULL, "提示", "WiFi 连接成功", NULL, true);
+            lv_obj_center(mbox);
+        } else if (prev_wifi_status == WifiStatus::CONNECTING && s != WifiStatus::CONNECTING && s != WifiStatus::CONNECTED) {
+            lv_obj_t * mbox = lv_msgbox_create(NULL, "提示", "WiFi 连接失败", NULL, true);
+            lv_obj_center(mbox);
+        }
+        prev_wifi_status = s;
+
         if (s == WifiStatus::CONNECTED) {
             lv_label_set_text_fmt(wifi_status_lbl, "状态: 已连接 %s", SystemManager::get_current_ssid().c_str());
             lv_obj_set_style_text_color(wifi_status_lbl, THEME_SUCCESS, 0);
@@ -204,13 +214,19 @@ static void wifi_timer_handler(lv_timer_t * timer) {
 
     auto networks = SystemManager::get_scanned_networks();
     if (networks.size() > 0) {
+        lv_coord_t scroll_y = lv_obj_get_scroll_y(wifi_list);
+        
         // 每次刷新前先清空旧列表，lv_obj_clean 会触发 LV_EVENT_DELETE 释放 SSID 内存
         lv_obj_clean(wifi_list);
 
         for (const auto& net : networks) {
             lv_obj_t * btn = lv_btn_create(wifi_list);
             lv_obj_set_width(btn, LV_PCT(100));
-            lv_obj_set_style_bg_color(btn, lv_color_white(), 0);
+            if (net.ssid == selected_ssid) {
+                lv_obj_set_style_bg_color(btn, THEME_PRIMARY_LIGHT, 0);
+            } else {
+                lv_obj_set_style_bg_color(btn, lv_color_white(), 0);
+            }
             lv_obj_set_style_text_color(btn, THEME_TEXT_MAIN, 0);
             
             // Allocate a stable string for user_data
@@ -226,6 +242,8 @@ static void wifi_timer_handler(lv_timer_t * timer) {
             lv_label_set_text_fmt(rssi, "%d dBm", net.rssi);
             lv_obj_align(rssi, LV_ALIGN_RIGHT_MID, -10, 0);
         }
+        
+        lv_obj_scroll_to_y(wifi_list, scroll_y, LV_ANIM_OFF);
     }
 }
 
@@ -279,6 +297,7 @@ static void render_wifi_tab() {
     lv_obj_clear_flag(pwd_ta, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(pwd_ta, 260, 40);
     lv_obj_align(pwd_ta, LV_ALIGN_TOP_LEFT, 0, 40);
+    lv_obj_set_style_text_font(pwd_ta, &lv_font_montserrat_14, 0);
     lv_obj_add_event_cb(pwd_ta, ta_event_cb, LV_EVENT_ALL, NULL);
 
     lv_obj_t * conn_btn = lv_btn_create(pwd_card);
