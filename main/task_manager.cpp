@@ -9,6 +9,7 @@
 #include "audio_api.h"
 #include "ai_agent.hpp"
 #include "web_panel.h"
+#include "system_manager.hpp"
 #include "cJSON.h"
 #include <string.h>
 #include <stdlib.h>
@@ -21,6 +22,8 @@ static QueueHandle_t sys_event_queue = NULL;
 
 static bool s_voice_session_active = false;
 static bool s_voice_external_input = false;
+static bool s_voice_auto_relisten_after_tts = false;
+static int s_voice_followup_timeout_ms = 0;
 
 static void broadcast_voice_json(const char* type, const char* state,
                                  const char* text) {
@@ -53,6 +56,7 @@ static void set_voice_state(voice_assist_state_t state, const char* text) {
 static esp_err_t start_voice_capture(bool external_input) {
     s_voice_session_active = true;
     s_voice_external_input = external_input;
+    s_voice_auto_relisten_after_tts = false;
     smart_fridge::ai::cancel_llm_api();
     audio_hal_interrupt();
     gui_bridge_wake();
@@ -106,6 +110,8 @@ static void system_bus_task(void *pvParameters) {
 
                 case EVT_VOICE_SESSION_STOP:
                     s_voice_session_active = false;
+                    s_voice_auto_relisten_after_tts = false;
+                    s_voice_followup_timeout_ms = 0;
                     smart_fridge::ai::cancel_llm_api();
                     audio_hal_interrupt();
                     gui_bridge_show_listening_indicator(false);
@@ -113,6 +119,8 @@ static void system_bus_task(void *pvParameters) {
                     break;
 
                 case EVT_VOICE_SESSION_INTERRUPT:
+                    s_voice_auto_relisten_after_tts = false;
+                    s_voice_followup_timeout_ms = 0;
                     smart_fridge::ai::cancel_llm_api();
                     audio_hal_interrupt();
                     broadcast_voice_json("voice.interrupted", "listening",
@@ -226,6 +234,9 @@ static void system_bus_task(void *pvParameters) {
                                 break;
                             case AUDIO_EVT_ASR_ERROR:
                             case AUDIO_EVT_TTS_ERROR:
+                                s_voice_session_active = false;
+                                s_voice_auto_relisten_after_tts = false;
+                                s_voice_followup_timeout_ms = 0;
                                 set_voice_state(VOICE_STATE_IDLE,
                                                 audio_evt->text);
                                 broadcast_voice_json("voice.error", "idle",
@@ -242,6 +253,8 @@ static void system_bus_task(void *pvParameters) {
                     if (evt.payload) {
                         voice_cmd_payload_t* voice_payload = (voice_cmd_payload_t*)evt.payload;
                         ESP_LOGI(TAG, "[Event] Voice command received: %s", voice_payload->command_text);
+                        s_voice_auto_relisten_after_tts = false;
+                        s_voice_followup_timeout_ms = 0;
                         
                         // 关闭聆听指示器，交给云端大模型异步处理
                         gui_bridge_show_listening_indicator(false);
@@ -317,6 +330,17 @@ static void system_bus_task(void *pvParameters) {
                         llm_response_payload_t* llm_payload = (llm_response_payload_t*)evt.payload;
                         ESP_LOGI(TAG, "[Event] LLM response ready. TTS: %s, UI Action: %d",
                                  llm_payload->tts_text, llm_payload->ui_action_id);
+                        const int continuous_ms =
+                            smart_fridge::system::SystemManager::
+                                get_voice_continuous_ms();
+                        s_voice_followup_timeout_ms =
+                            llm_payload->keep_listening
+                                ? (continuous_ms > 0 ? continuous_ms : 10000)
+                                : continuous_ms;
+                        s_voice_auto_relisten_after_tts =
+                            s_voice_session_active &&
+                            !s_voice_external_input &&
+                            s_voice_followup_timeout_ms > 0;
                         
                         // 通知 A 模块(GUI) 显示 TTS 文本
                         gui_bridge_show_tts_text(llm_payload->tts_text);
@@ -355,15 +379,24 @@ static void system_bus_task(void *pvParameters) {
                     ESP_LOGI(TAG, "[Event] TTS playback done");
                     // TTS 播报完成后可关闭语音指示器或返回待机
                     gui_bridge_show_listening_indicator(false);
-                    if (s_voice_session_active &&
-                        !s_voice_external_input) {
+                    if (s_voice_auto_relisten_after_tts) {
+                        s_voice_auto_relisten_after_tts = false;
+                        if (s_voice_followup_timeout_ms <= 0) {
+                            s_voice_followup_timeout_ms = 10000;
+                        }
+                        audio_hal_set_next_listening_timeout_ms(
+                            s_voice_followup_timeout_ms);
+                        s_voice_followup_timeout_ms = 0;
+                        gui_bridge_show_listening_indicator(true);
+                        set_voice_state(VOICE_STATE_LISTENING,
+                                        "请继续说...");
                         vTaskDelay(pdMS_TO_TICKS(100));
                         audio_hal_start_listening();
                     } else {
-                        set_voice_state(VOICE_STATE_IDLE,
-                                        s_voice_session_active
-                                            ? "按麦克风继续"
-                                            : "语音会话已结束");
+                        s_voice_session_active = false;
+                        s_voice_auto_relisten_after_tts = false;
+                        s_voice_followup_timeout_ms = 0;
+                        set_voice_state(VOICE_STATE_IDLE, "语音会话已结束");
                     }
                     break;
 

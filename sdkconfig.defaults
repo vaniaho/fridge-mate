@@ -97,6 +97,13 @@ CONFIG_ESP_HOSTED_SDIO_PIN_D1=15
 CONFIG_ESP_HOSTED_SDIO_PIN_D2=16
 CONFIG_ESP_HOSTED_SDIO_PIN_D3=17
 CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET_SLAVE=54
+
+# ESP-SR local wake word model. This makes the esp-sr model packing step place
+# the matching WakeNet model into srmodels.bin for the "model" partition.
+CONFIG_MODEL_IN_FLASH=y
+CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=y
+CONFIG_SMART_FRIDGE_WAKE_WORD_TASK_STACK_SIZE=24576
+
 # Streaming voice defaults
 CONFIG_SMART_FRIDGE_DEFAULT_ASR_URL="wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 CONFIG_SMART_FRIDGE_DEFAULT_ASR_MODEL="volc.bigasr.sauc.duration"

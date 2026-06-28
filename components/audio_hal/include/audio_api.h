@@ -41,11 +41,15 @@ void audio_hal_set_event_callback(audio_hal_event_cb_t cb);
 void audio_hal_set_pcm_output_callback(audio_hal_pcm_output_cb_t cb);
 
 /**
- * Start/stop the wake-word task. The hardware capture path is ready, but the
- * local detector itself is intentionally left as a later ring-buffer consumer.
+ * Start/stop the local wake-word task. The task owns microphone polling while
+ * idle, keeps listening during normal TTS for barge-in, and pauses during
+ * ASR/realtime sessions. The production WakeNet/TFLM keyword backend can be
+ * swapped behind the detector adapter.
  */
 esp_err_t audio_hal_start_wake_word(void);
 esp_err_t audio_hal_stop_wake_word(void);
+esp_err_t audio_hal_configure_wake_word(bool enabled, int sensitivity,
+                                        bool tts_barge_in_enabled);
 
 /**
  * Stream real microphone PCM to cloud ASR. Local endpoint detection closes
@@ -53,6 +57,7 @@ esp_err_t audio_hal_stop_wake_word(void);
  */
 esp_err_t audio_hal_start_listening(void);
 esp_err_t audio_hal_stop_listening(void);
+esp_err_t audio_hal_set_next_listening_timeout_ms(int timeout_ms);
 
 /** Browser/external 16 kHz mono PCM input. */
 esp_err_t audio_hal_start_external_listening(void);

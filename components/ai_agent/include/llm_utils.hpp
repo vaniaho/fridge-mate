@@ -29,7 +29,8 @@ inline void safe_copy_text(char* dst, size_t dst_size, const std::string& src) {
  */
 inline void dispatch_llm_response_event(const std::string& tts_text,
                                         int ui_action_id,
-                                        bool tts_already_queued = false) {
+                                        bool tts_already_queued = false,
+                                        bool keep_listening = false) {
     llm_response_payload_t* payload = (llm_response_payload_t*)malloc(sizeof(llm_response_payload_t));
     if (!payload) {
         ESP_LOGE("LLMUtils", "Failed to allocate LLM response payload");
@@ -39,6 +40,7 @@ inline void dispatch_llm_response_event(const std::string& tts_text,
     safe_copy_text(payload->tts_text, sizeof(payload->tts_text), tts_text);
     payload->ui_action_id = ui_action_id;
     payload->tts_already_queued = tts_already_queued;
+    payload->keep_listening = keep_listening;
 
     if (send_system_event(EVT_LLM_RESPONSE_READY, payload, sizeof(llm_response_payload_t)) != ESP_OK) {
         free(payload);

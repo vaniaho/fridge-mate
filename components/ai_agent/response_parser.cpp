@@ -57,6 +57,7 @@ bool parse_action_object(cJSON* object, llm_action_t& action) {
     cJSON* category = cJSON_GetObjectItem(object, "category");
     cJSON* expire_days = cJSON_GetObjectItem(object, "expire_days");
     cJSON* quantity = cJSON_GetObjectItem(object, "quantity");
+    cJSON* unit = cJSON_GetObjectItem(object, "unit");
     cJSON* tts_reply = cJSON_GetObjectItem(object, "tts_reply");
 
     if (cJSON_IsString(target_item) && target_item->valuestring) {
@@ -70,6 +71,9 @@ bool parse_action_object(cJSON* object, llm_action_t& action) {
     }
     if (cJSON_IsNumber(quantity)) {
         action.quantity = quantity->valueint;
+    }
+    if (cJSON_IsString(unit) && unit->valuestring) {
+        action.unit = trim(unit->valuestring);
     }
     if (cJSON_IsString(tts_reply) && tts_reply->valuestring) {
         action.tts_reply = trim(tts_reply->valuestring);

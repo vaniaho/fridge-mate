@@ -56,6 +56,13 @@ const timeCurrent = document.getElementById('time-current');
 const timeInput = document.getElementById('time-input');
 const timeSyncBtn = document.getElementById('time-sync-btn');
 const timeSetForm = document.getElementById('time-set-form');
+const voiceRuntimeForm = document.getElementById('voice-runtime-form');
+const voiceWakeEnabled = document.getElementById('voice-wake-enabled');
+const voiceBargeEnabled = document.getElementById('voice-barge-enabled');
+const voiceSensitivity = document.getElementById('voice-sensitivity');
+const voiceSensitivityValue = document.getElementById('voice-sensitivity-value');
+const voiceContinuous = document.getElementById('voice-continuous');
+const voiceContinuousValue = document.getElementById('voice-continuous-value');
 
 // Recipes
 const recipeContainer = document.getElementById('recipe-container');
@@ -668,6 +675,7 @@ async function fetchSettings() {
         document.getElementById('set-ssid').value = data.wifi_ssid || '';
         document.getElementById('set-pass').value = data.wifi_pass || '';
         fetchTimeSettings();
+        fetchVoiceRuntimeSettings();
     } catch(e) { console.error(e); }
 }
 
@@ -699,6 +707,33 @@ function datetimeLocalToPayload(value) {
     return value.length === 16 ? value + ':00' : value;
 }
 
+function fillVoiceRuntimeSettings(data) {
+    if (!data) return;
+    const sensitivity = Number.isFinite(data.wake_sensitivity)
+        ? data.wake_sensitivity : 70;
+    const seconds = Math.round((data.continuous_ms || 0) / 1000);
+    if (voiceWakeEnabled) voiceWakeEnabled.checked = !!data.wake_enabled;
+    if (voiceBargeEnabled) {
+        voiceBargeEnabled.checked = !!data.tts_barge_in_enabled;
+    }
+    if (voiceSensitivity) voiceSensitivity.value = sensitivity;
+    if (voiceSensitivityValue) {
+        voiceSensitivityValue.textContent = `${sensitivity}%`;
+    }
+    if (voiceContinuous) voiceContinuous.value = seconds;
+    if (voiceContinuousValue) {
+        voiceContinuousValue.textContent = `${seconds} 秒`;
+    }
+}
+
+async function fetchVoiceRuntimeSettings() {
+    try {
+        const res = await fetch('/api/voice/settings');
+        const data = await res.json();
+        fillVoiceRuntimeSettings(data);
+    } catch(e) { console.error(e); }
+}
+
 settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = {
@@ -718,6 +753,46 @@ settingsForm.addEventListener('submit', async (e) => {
         }
     } catch(e) { alert('网络错误'); }
 });
+
+if (voiceSensitivity && voiceSensitivityValue) {
+    voiceSensitivity.addEventListener('input', () => {
+        voiceSensitivityValue.textContent = `${voiceSensitivity.value}%`;
+    });
+}
+
+if (voiceContinuous && voiceContinuousValue) {
+    voiceContinuous.addEventListener('input', () => {
+        voiceContinuousValue.textContent = `${voiceContinuous.value} 秒`;
+    });
+}
+
+if (voiceRuntimeForm) {
+    voiceRuntimeForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+            wake_enabled: !!voiceWakeEnabled?.checked,
+            wake_sensitivity: parseInt(voiceSensitivity?.value || '70', 10),
+            tts_barge_in_enabled: !!voiceBargeEnabled?.checked,
+            continuous_ms: parseInt(voiceContinuous?.value || '10', 10) * 1000
+        };
+        try {
+            const res = await fetch('/api/voice/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.status === 'ok') {
+                fillVoiceRuntimeSettings(data);
+                alert('语音设置已保存');
+            } else {
+                alert('语音设置保存失败');
+            }
+        } catch(e) {
+            alert('网络错误');
+        }
+    });
+}
 
 if (timeSyncBtn) {
     timeSyncBtn.addEventListener('click', async () => {

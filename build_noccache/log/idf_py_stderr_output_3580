@@ -1,0 +1,46 @@
+Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\python_env\idf5.5_py3.12_env\Scripts\python.exe -DESP_PLATFORM=1 -DCCACHE_ENABLE=0 -DCMAKE_MAKE_PROGRAM=C:/Espressif/tools/ninja/1.12.1/ninja.exe -DCCACHE_ENABLE=0 C:\Code\ESP\smart_fridge
+CMake Error at C:/Espressif/esp/.espressif/v5.5.4/esp-idf/tools/cmake/project.cmake:601 (__project):
+  The CMAKE_C_COMPILER:
+
+    riscv32-esp-elf-gcc
+
+  is not a full path and was not found in the PATH.  Perhaps the extension is
+  missing?
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CC" or the CMake cache entry CMAKE_C_COMPILER to the full path to
+  the compiler, or to the compiler name if it is in the PATH.
+Call Stack (most recent call first):
+  CMakeLists.txt:6 (project)
+
+
+CMake Error at C:/Espressif/esp/.espressif/v5.5.4/esp-idf/tools/cmake/project.cmake:601 (__project):
+  The CMAKE_CXX_COMPILER:
+
+    riscv32-esp-elf-g++
+
+  is not a full path and was not found in the PATH.  Perhaps the extension is
+  missing?
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "CXX" or the CMake cache entry CMAKE_CXX_COMPILER to the full path
+  to the compiler, or to the compiler name if it is in the PATH.
+Call Stack (most recent call first):
+  CMakeLists.txt:6 (project)
+
+
+CMake Error at C:/Espressif/esp/.espressif/v5.5.4/esp-idf/tools/cmake/project.cmake:601 (__project):
+  The CMAKE_ASM_COMPILER:
+
+    riscv32-esp-elf-gcc
+
+  is not a full path and was not found in the PATH.  Perhaps the extension is
+  missing?
+
+  Tell CMake where to find the compiler by setting either the environment
+  variable "ASM" or the CMake cache entry CMAKE_ASM_COMPILER to the full path
+  to the compiler, or to the compiler name if it is in the PATH.
+Call Stack (most recent call first):
+  CMakeLists.txt:6 (project)
+
+

@@ -62,6 +62,15 @@ std::string trim_whitespace(const std::string& text) {
     return text.substr(start, end - start + 1);
 }
 
+std::string display_unit(const llm_action_t& action) {
+    return action.unit.empty() ? "个" : action.unit;
+}
+
+std::string display_quantity_item(const llm_action_t& action) {
+    return std::to_string(action.quantity) + " " +
+           display_unit(action) + action.target_item;
+}
+
 bool is_confirmation_text(const std::string& text) {
     const std::string normalized = trim_text(text);
     return normalized == "确认" || normalized == "确定" ||
@@ -127,19 +136,18 @@ std::string pending_prompt(const llm_action_t& action) {
             if (!operations.empty()) operations += "、";
             operations += item.type == llm_action_type_t::ADD
                 ? "存入" : "取出";
-            operations += std::to_string(item.quantity) + "个" +
-                          item.target_item;
+            operations += display_quantity_item(item);
         }
         return "准备" + operations +
                "，请说“确认”执行全部操作，或说“取消”放弃。";
     }
     char buf[256];
     if (action.type == llm_action_type_t::ADD) {
-        snprintf(buf, sizeof(buf), "准备存入 %d 个%s，请说“确认”执行，或说“取消”放弃。",
-                 action.quantity, action.target_item.c_str());
+        snprintf(buf, sizeof(buf), "准备存入 %s，请说“确认”执行，或说“取消”放弃。",
+                 display_quantity_item(action).c_str());
     } else {
-        snprintf(buf, sizeof(buf), "准备取出 %d 个%s，请说“确认”执行，或说“取消”放弃。",
-                 action.quantity, action.target_item.c_str());
+        snprintf(buf, sizeof(buf), "准备取出 %s，请说“确认”执行，或说“取消”放弃。",
+                 display_quantity_item(action).c_str());
     }
     return buf;
 }
@@ -147,6 +155,7 @@ std::string pending_prompt(const llm_action_t& action) {
 void normalize_inventory_action(llm_action_t& action) {
     action.target_item = trim_whitespace(action.target_item);
     action.category = trim_whitespace(action.category);
+    action.unit = trim_whitespace(action.unit);
     if (action.type == llm_action_type_t::ADD) {
         const char* fallback_category =
             category_lookup(action.target_item.c_str());
@@ -169,7 +178,8 @@ void normalize_batch(llm_action_t& batch) {
             merged.begin(), merged.end(),
             [&](const llm_action_t& value) {
                 return value.type == item.type &&
-                       value.target_item == item.target_item;
+                       value.target_item == item.target_item &&
+                       display_unit(value) == display_unit(item);
             });
         if (existing == merged.end()) {
             merged.push_back(std::move(item));
@@ -250,7 +260,7 @@ llm_error_t execute_llm_action(const llm_action_t& action,
             save_pending_action(pending);
             out_reply = pending_prompt(pending);
             dispatch_llm_response_event(out_reply, UI_ACTION_NONE,
-                                        tts_already_queued);
+                                        tts_already_queued, true);
             ESP_LOGI(TAG, "[LLM Action] ADD awaiting confirmation: %s x%d",
                      pending.target_item.c_str(), pending.quantity);
             return llm_error_t::OK;
@@ -278,7 +288,7 @@ llm_error_t execute_llm_action(const llm_action_t& action,
             save_pending_action(pending);
             out_reply = pending_prompt(pending);
             dispatch_llm_response_event(out_reply, UI_ACTION_NONE,
-                                        tts_already_queued);
+                                        tts_already_queued, true);
             ESP_LOGI(TAG, "[LLM Action] REMOVE awaiting confirmation: %s x%d",
                      pending.target_item.c_str(), pending.quantity);
             return llm_error_t::OK;
@@ -313,7 +323,7 @@ llm_error_t execute_llm_action(const llm_action_t& action,
             save_pending_action(pending);
             out_reply = pending_prompt(pending);
             dispatch_llm_response_event(out_reply, UI_ACTION_NONE,
-                                        tts_already_queued);
+                                        tts_already_queued, true);
             ESP_LOGI(TAG, "[LLM Action] BATCH awaiting confirmation: %u actions",
                      static_cast<unsigned>(pending.actions.size()));
             return llm_error_t::OK;
@@ -386,8 +396,9 @@ pending_confirmation_result_t handle_pending_inventory_confirmation(
             if (!completed.empty()) completed += "，";
             completed += action.type == llm_action_type_t::ADD
                 ? "已存入" : "已取出";
-            completed += std::to_string(result.affected_quantity) +
-                         "个" + action.target_item;
+            llm_action_t displayed = action;
+            displayed.quantity = result.affected_quantity;
+            completed += display_quantity_item(displayed);
         }
         invalidate_llm_context_cache();
         send_system_event(EVT_INVENTORY_UPDATED, NULL, 0);
@@ -406,11 +417,11 @@ pending_confirmation_result_t handle_pending_inventory_confirmation(
     send_system_event(EVT_INVENTORY_UPDATED, NULL, 0);
 
     if (pending.type == llm_action_type_t::ADD) {
-        out_reply = "已存入 " + std::to_string(result.affected_quantity) +
-                    " 个" + pending.target_item;
+        pending.quantity = result.affected_quantity;
+        out_reply = "已存入 " + display_quantity_item(pending);
     } else {
-        out_reply = "已取出 " + std::to_string(result.affected_quantity) +
-                    " 个" + pending.target_item;
+        pending.quantity = result.affected_quantity;
+        out_reply = "已取出 " + display_quantity_item(pending);
     }
     dispatch_llm_response_event(out_reply, UI_ACTION_REFRESH_LIST);
     return pending_confirmation_result_t::HANDLED;

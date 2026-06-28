@@ -44,6 +44,16 @@ public:
     static void set_volume(int percent);
     static int get_volume();
 
+    // Voice interaction runtime settings
+    static void set_voice_wake_enabled(bool enabled);
+    static bool get_voice_wake_enabled();
+    static void set_voice_wake_sensitivity(int percent);
+    static int get_voice_wake_sensitivity();
+    static void set_voice_tts_barge_in_enabled(bool enabled);
+    static bool get_voice_tts_barge_in_enabled();
+    static void set_voice_continuous_ms(int ms);
+    static int get_voice_continuous_ms();
+
     // System Info
     static std::string get_firmware_version();
     static uint32_t get_free_heap();
@@ -56,6 +66,10 @@ private:
     static void save_settings();
     static int32_t current_brightness;
     static int32_t current_volume;
+    static bool voice_wake_enabled;
+    static int32_t voice_wake_sensitivity;
+    static bool voice_tts_barge_in_enabled;
+    static int32_t voice_continuous_ms;
     static WifiStatus wifi_status;
     static std::string current_ssid;
     static std::string current_ip;

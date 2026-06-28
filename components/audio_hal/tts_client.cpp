@@ -36,7 +36,7 @@ constexpr EventBits_t SYNTHESIS_STARTED = BIT7;
 constexpr int CONNECT_TIMEOUT_MS = 20000;
 constexpr int SYNTHESIS_TIMEOUT_MS = 30000;
 constexpr int SESSION_FINISH_TIMEOUT_MS = 3000;
-constexpr int AUDIO_IDLE_COMPLETE_MS = 1800;
+constexpr int AUDIO_IDLE_COMPLETE_MS = 900;
 static std::atomic<bool> s_tts_request_active{false};
 
 struct tts_options_t {

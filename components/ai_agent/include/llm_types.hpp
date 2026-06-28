@@ -48,6 +48,7 @@ struct llm_action_t {
     std::string category;
     int quantity = 0;
     int expire_days = 0;
+    std::string unit;
     std::string tts_reply;
     std::vector<llm_action_t> actions;
 };

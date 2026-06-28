@@ -55,6 +55,53 @@ bool consume_prefix(std::string &value, const char *prefix)
     return true;
 }
 
+bool consume_suffix(std::string &value, const char *suffix)
+{
+    const size_t length = strlen(suffix);
+    if (value.size() < length ||
+        value.compare(value.size() - length, length, suffix) != 0) {
+        return false;
+    }
+    value.erase(value.size() - length);
+    value = trim(value);
+    return true;
+}
+
+std::string normalize_inventory_text(std::string text)
+{
+    text = trim(text);
+    bool changed = true;
+    while (changed && !text.empty()) {
+        changed = false;
+        static const char *prefixes[] = {
+            "帮我", "请帮我", "请", "麻烦你", "麻烦", "给我", "把", "再",
+            "顺便", "小鲜", "小鲜小鲜",
+        };
+        for (const char *prefix : prefixes) {
+            if (consume_prefix(text, prefix)) {
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    changed = true;
+    while (changed && !text.empty()) {
+        changed = false;
+        static const char *suffixes[] = {
+            "。", "！", "？", "；", ".", ",", "!", "?", "一下", "吧", "呀",
+            "呢", "谢谢", "到冰箱里", "进冰箱", "放冰箱",
+        };
+        for (const char *suffix : suffixes) {
+            if (consume_suffix(text, suffix)) {
+                changed = true;
+                break;
+            }
+        }
+    }
+    return text;
+}
+
 int chinese_number_value(const std::string &text)
 {
     struct token_t {
@@ -95,30 +142,9 @@ int chinese_number_value(const std::string &text)
 }
 
 bool parse_quantity_and_item(std::string segment, int &quantity,
-                             std::string &item)
+                             std::string &item, std::string &unit)
 {
-    segment = trim(segment);
-    while (!segment.empty() &&
-           (segment.back() == '.' || segment.back() == ',' ||
-            segment.back() == '!' || segment.back() == '?')) {
-        segment.pop_back();
-    }
-    const char *chinese_punctuation[] = {"。", "！", "？", "；"};
-    bool removed = true;
-    while (removed) {
-        removed = false;
-        for (const char *suffix : chinese_punctuation) {
-            const size_t length = strlen(suffix);
-            if (segment.size() >= length &&
-                segment.compare(segment.size() - length, length,
-                                suffix) == 0) {
-                segment.erase(segment.size() - length);
-                segment = trim(segment);
-                removed = true;
-                break;
-            }
-        }
-    }
+    segment = normalize_inventory_text(std::move(segment));
     if (segment.empty()) return false;
 
     size_t number_length = 0;
@@ -153,18 +179,33 @@ bool parse_quantity_and_item(std::string segment, int &quantity,
     if (quantity <= 0) return false;
 
     item = trim(segment.substr(number_length));
+    unit.clear();
     static const char *classifiers[] = {
-        "个", "只", "盒", "瓶", "袋", "颗", "根", "块", "斤",
+        "个", "只", "盒", "瓶", "袋", "颗", "根", "块", "斤", "公斤",
+        "包", "罐", "条", "片", "份", "把", "棵", "串", "杯", "升",
+        "毫升", "克",
     };
     for (const char *classifier : classifiers) {
-        if (consume_prefix(item, classifier)) break;
+        if (consume_prefix(item, classifier)) {
+            unit = classifier;
+            break;
+        }
+    }
+    item = normalize_inventory_text(item);
+    static const char *bad_item_prefixes[] = {
+        "去", "进去", "到", "入", "进", "出", "出来",
+    };
+    for (const char *prefix : bad_item_prefixes) {
+        if (consume_prefix(item, prefix)) break;
     }
     return !item.empty();
 }
 
 std::vector<std::string> split_inventory_items(const std::string &text)
 {
-    static const char *separators[] = {"以及", "还有", "和", "、", "，", ","};
+    static const char *separators[] = {
+        "以及", "还有", "再来", "另外", "顺便", "和", "、", "，", ",",
+    };
     std::vector<std::string> result;
     size_t offset = 0;
     while (offset < text.size()) {
@@ -198,41 +239,59 @@ bool try_parse_local_inventory_command(const std::string &input,
         llm_action_type_t action;
     };
     static const verb_t verbs[] = {
+        {"拿出来", llm_action_type_t::REMOVE},
         {"取出", llm_action_type_t::REMOVE},
         {"拿出", llm_action_type_t::REMOVE},
         {"移除", llm_action_type_t::REMOVE},
         {"删除", llm_action_type_t::REMOVE},
+        {"消耗", llm_action_type_t::REMOVE},
+        {"吃掉", llm_action_type_t::REMOVE},
+        {"用掉", llm_action_type_t::REMOVE},
+        {"放进去", llm_action_type_t::ADD},
+        {"放到冰箱里", llm_action_type_t::ADD},
+        {"放冰箱", llm_action_type_t::ADD},
         {"放入", llm_action_type_t::ADD},
         {"放进", llm_action_type_t::ADD},
+        {"存进去", llm_action_type_t::ADD},
         {"存入", llm_action_type_t::ADD},
+        {"加入", llm_action_type_t::ADD},
+        {"加进去", llm_action_type_t::ADD},
         {"添加", llm_action_type_t::ADD},
     };
 
     const verb_t *matched_verb = nullptr;
     size_t verb_offset = std::string::npos;
+    size_t verb_length = 0;
     for (const auto &verb : verbs) {
         const size_t found = input.find(verb.text);
         if (found != std::string::npos &&
-            (verb_offset == std::string::npos || found < verb_offset)) {
+            (verb_offset == std::string::npos || found < verb_offset ||
+             (found == verb_offset && strlen(verb.text) > verb_length))) {
             matched_verb = &verb;
             verb_offset = found;
+            verb_length = strlen(verb.text);
         }
     }
     if (!matched_verb) return false;
 
-    std::string tail = input.substr(
-        verb_offset + strlen(matched_verb->text));
+    std::string tail = normalize_inventory_text(
+        input.substr(verb_offset + verb_length));
+    if (tail.empty() && verb_offset > 0) {
+        tail = normalize_inventory_text(input.substr(0, verb_offset));
+    }
     std::vector<llm_action_t> parsed;
     for (const auto &segment : split_inventory_items(tail)) {
         int quantity = 0;
         std::string item;
-        if (!parse_quantity_and_item(segment, quantity, item)) {
+        std::string unit;
+        if (!parse_quantity_and_item(segment, quantity, item, unit)) {
             return false;
         }
         llm_action_t child;
         child.type = matched_verb->action;
         child.target_item = item;
         child.quantity = quantity;
+        child.unit = unit;
         parsed.push_back(std::move(child));
     }
     if (parsed.empty()) return false;

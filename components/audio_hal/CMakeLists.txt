@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "realtime_client.cpp" "tts_client.cpp" "volc_binary_protocol.cpp" "websocket_diagnostics.cpp" "audio_hal.cpp" "asr_client.cpp"
+    SRCS "realtime_client.cpp" "tts_client.cpp" "volc_binary_protocol.cpp" "websocket_diagnostics.cpp" "wake_word_engine.cpp" "audio_hal.cpp" "asr_client.cpp"
     INCLUDE_DIRS "include"
     REQUIRES
         esp_http_client

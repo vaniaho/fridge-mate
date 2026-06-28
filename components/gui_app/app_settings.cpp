@@ -523,6 +523,95 @@ static void render_device_info_tab() {
 // -----------------------------------------------------------------------------
 // Voice Model Tab
 // -----------------------------------------------------------------------------
+static void apply_voice_runtime_settings() {
+    audio_hal_configure_wake_word(
+        SystemManager::get_voice_wake_enabled(),
+        SystemManager::get_voice_wake_sensitivity(),
+        SystemManager::get_voice_tts_barge_in_enabled());
+}
+
+static void voice_wake_switch_cb(lv_event_t * e) {
+    lv_obj_t * sw = lv_event_get_target(e);
+    SystemManager::set_voice_wake_enabled(
+        lv_obj_has_state(sw, LV_STATE_CHECKED));
+    apply_voice_runtime_settings();
+}
+
+static void voice_barge_switch_cb(lv_event_t * e) {
+    lv_obj_t * sw = lv_event_get_target(e);
+    SystemManager::set_voice_tts_barge_in_enabled(
+        lv_obj_has_state(sw, LV_STATE_CHECKED));
+    apply_voice_runtime_settings();
+}
+
+static void voice_sensitivity_slider_cb(lv_event_t * e) {
+    lv_obj_t * slider = lv_event_get_target(e);
+    lv_obj_t * label = (lv_obj_t *)lv_event_get_user_data(e);
+    int value = lv_slider_get_value(slider);
+    SystemManager::set_voice_wake_sensitivity(value);
+    apply_voice_runtime_settings();
+    if (label) {
+        lv_label_set_text_fmt(label, "唤醒灵敏度: %d%%", value);
+    }
+}
+
+static void voice_continuous_slider_cb(lv_event_t * e) {
+    lv_obj_t * slider = lv_event_get_target(e);
+    lv_obj_t * label = (lv_obj_t *)lv_event_get_user_data(e);
+    int seconds = lv_slider_get_value(slider);
+    SystemManager::set_voice_continuous_ms(seconds * 1000);
+    if (label) {
+        lv_label_set_text_fmt(label, "连续对话: %d 秒", seconds);
+    }
+}
+
+static void add_switch_row(lv_obj_t * parent, const char * text,
+                           bool checked, lv_event_cb_t cb) {
+    lv_obj_t * row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 44);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * label = lv_label_create(row);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, font_cn_18, 0);
+    lv_obj_set_style_text_color(label, THEME_TEXT_MAIN, 0);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t * sw = lv_switch_create(row);
+    if (checked) {
+        lv_obj_add_state(sw, LV_STATE_CHECKED);
+    }
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+static void add_slider_row(lv_obj_t * parent, const char * fmt,
+                           int value, int min, int max,
+                           lv_event_cb_t cb) {
+    lv_obj_t * row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 58);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * label = lv_label_create(row);
+    lv_label_set_text_fmt(label, fmt, value);
+    lv_obj_set_style_text_font(label, font_cn_18, 0);
+    lv_obj_set_style_text_color(label, THEME_TEXT_MAIN, 0);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t * slider = lv_slider_create(row);
+    lv_obj_set_width(slider, LV_PCT(55));
+    lv_slider_set_range(slider, min, max);
+    lv_slider_set_value(slider, value, LV_ANIM_OFF);
+    lv_obj_align(slider, LV_ALIGN_BOTTOM_RIGHT, 0, -4);
+    lv_obj_add_event_cb(slider, cb, LV_EVENT_VALUE_CHANGED, label);
+}
+
 static void render_voice_tab() {
     lv_obj_clean(content_area);
 
@@ -531,9 +620,29 @@ static void render_voice_tab() {
     lv_obj_add_style(title, &style_text_title, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 40, 20);
 
+    lv_obj_t * runtime_card = lv_obj_create(content_area);
+    lv_obj_set_size(runtime_card, LV_PCT(90), 240);
+    lv_obj_align(runtime_card, LV_ALIGN_TOP_LEFT, 40, 80);
+    lv_obj_add_style(runtime_card, &style_card, 0);
+    lv_obj_set_flex_flow(runtime_card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(runtime_card, 10, 0);
+
+    add_switch_row(runtime_card, "唤醒词检测",
+                   SystemManager::get_voice_wake_enabled(),
+                   voice_wake_switch_cb);
+    add_slider_row(runtime_card, "唤醒灵敏度: %d%%",
+                   SystemManager::get_voice_wake_sensitivity(),
+                   0, 100, voice_sensitivity_slider_cb);
+    add_switch_row(runtime_card, "TTS 播放中允许打断",
+                   SystemManager::get_voice_tts_barge_in_enabled(),
+                   voice_barge_switch_cb);
+    add_slider_row(runtime_card, "连续对话: %d 秒",
+                   SystemManager::get_voice_continuous_ms() / 1000,
+                   0, 30, voice_continuous_slider_cb);
+
     lv_obj_t * card = lv_obj_create(content_area);
-    lv_obj_set_size(card, LV_PCT(90), 430);
-    lv_obj_align(card, LV_ALIGN_TOP_LEFT, 40, 80);
+    lv_obj_set_size(card, LV_PCT(90), 330);
+    lv_obj_align(card, LV_ALIGN_TOP_LEFT, 40, 340);
     lv_obj_add_style(card, &style_card, 0);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(card, 16, 0);

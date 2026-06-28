@@ -24,6 +24,10 @@ static const char *TAG = "SystemManager";
 
 int32_t SystemManager::current_brightness = 80;
 int32_t SystemManager::current_volume = 50;
+bool SystemManager::voice_wake_enabled = true;
+int32_t SystemManager::voice_wake_sensitivity = 70;
+bool SystemManager::voice_tts_barge_in_enabled = true;
+int32_t SystemManager::voice_continuous_ms = 10000;
 WifiStatus SystemManager::wifi_status = WifiStatus::DISCONNECTED;
 std::string SystemManager::current_ssid = "";
 std::string SystemManager::current_ip = "";
@@ -176,6 +180,18 @@ void SystemManager::load_settings() {
     if (nvs_open("settings", NVS_READONLY, &my_handle) == ESP_OK) {
         nvs_get_i32(my_handle, "brightness", &current_brightness);
         nvs_get_i32(my_handle, "volume", &current_volume);
+        int32_t wake_enabled = voice_wake_enabled ? 1 : 0;
+        int32_t barge_in_enabled = voice_tts_barge_in_enabled ? 1 : 0;
+        nvs_get_i32(my_handle, "v_wake_en", &wake_enabled);
+        nvs_get_i32(my_handle, "v_wake_sens", &voice_wake_sensitivity);
+        nvs_get_i32(my_handle, "v_barge_en", &barge_in_enabled);
+        nvs_get_i32(my_handle, "v_cont_ms", &voice_continuous_ms);
+        voice_wake_enabled = wake_enabled != 0;
+        voice_tts_barge_in_enabled = barge_in_enabled != 0;
+        if (voice_wake_sensitivity < 0) voice_wake_sensitivity = 0;
+        if (voice_wake_sensitivity > 100) voice_wake_sensitivity = 100;
+        if (voice_continuous_ms < 0) voice_continuous_ms = 0;
+        if (voice_continuous_ms > 30000) voice_continuous_ms = 30000;
         nvs_close(my_handle);
     }
 }
@@ -185,6 +201,11 @@ void SystemManager::save_settings() {
     if (nvs_open("settings", NVS_READWRITE, &my_handle) == ESP_OK) {
         nvs_set_i32(my_handle, "brightness", current_brightness);
         nvs_set_i32(my_handle, "volume", current_volume);
+        nvs_set_i32(my_handle, "v_wake_en", voice_wake_enabled ? 1 : 0);
+        nvs_set_i32(my_handle, "v_wake_sens", voice_wake_sensitivity);
+        nvs_set_i32(my_handle, "v_barge_en",
+                    voice_tts_barge_in_enabled ? 1 : 0);
+        nvs_set_i32(my_handle, "v_cont_ms", voice_continuous_ms);
         nvs_commit(my_handle);
         nvs_close(my_handle);
     }
@@ -303,6 +324,46 @@ void SystemManager::set_volume(int percent) {
 
 int SystemManager::get_volume() {
     return current_volume;
+}
+
+void SystemManager::set_voice_wake_enabled(bool enabled) {
+    voice_wake_enabled = enabled;
+    save_settings();
+}
+
+bool SystemManager::get_voice_wake_enabled() {
+    return voice_wake_enabled;
+}
+
+void SystemManager::set_voice_wake_sensitivity(int percent) {
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    voice_wake_sensitivity = percent;
+    save_settings();
+}
+
+int SystemManager::get_voice_wake_sensitivity() {
+    return voice_wake_sensitivity;
+}
+
+void SystemManager::set_voice_tts_barge_in_enabled(bool enabled) {
+    voice_tts_barge_in_enabled = enabled;
+    save_settings();
+}
+
+bool SystemManager::get_voice_tts_barge_in_enabled() {
+    return voice_tts_barge_in_enabled;
+}
+
+void SystemManager::set_voice_continuous_ms(int ms) {
+    if (ms < 0) ms = 0;
+    if (ms > 30000) ms = 30000;
+    voice_continuous_ms = ms;
+    save_settings();
+}
+
+int SystemManager::get_voice_continuous_ms() {
+    return voice_continuous_ms;
 }
 
 std::string SystemManager::get_firmware_version() {

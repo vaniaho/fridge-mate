@@ -9,3 +9,4 @@ project(smart_fridge)
 # and consumes a va_list twice. Apply the small compatibility fix after the
 # component manager has materialized managed_components.
 include(${CMAKE_SOURCE_DIR}/cmake/patch_esp_websocket_client.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/patch_esp_sr.cmake)

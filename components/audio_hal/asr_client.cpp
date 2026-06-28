@@ -692,8 +692,12 @@ asr_result_t asr_recognize_stream(const asr_audio_source_t &source,
         }
 
         if (last_sent && !result.cancelled && result.error_hint.empty()) {
-            xEventGroupWaitBits(context.events, WS_FINAL | WS_ERROR, pdFALSE,
-                                pdFALSE, pdMS_TO_TICKS(FINAL_TIMEOUT_MS));
+            bits = xEventGroupWaitBits(context.events, WS_FINAL | WS_ERROR,
+                                       pdFALSE, pdFALSE,
+                                       pdMS_TO_TICKS(FINAL_TIMEOUT_MS));
+            if (bits & WS_FINAL) {
+                vTaskDelay(pdMS_TO_TICKS(120));
+            }
         }
     }
 

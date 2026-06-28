@@ -24,6 +24,7 @@ static const char *TAG = "WebPanelApi";
 #include "gui_app.h"
 #include "system_events.h"
 #include "audio_api.h"
+#include "system_manager.hpp"
 
 static char* receive_request_body(httpd_req_t* req, size_t max_length) {
     if (!req || req->content_len <= 0 ||
@@ -369,6 +370,83 @@ static esp_err_t post_settings_handler(httpd_req_t *req) {
     cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"status\":\"ok\"}", -1);
+    return ESP_OK;
+}
+
+static void add_voice_settings_payload(cJSON* root) {
+    using smart_fridge::system::SystemManager;
+    cJSON_AddBoolToObject(root, "wake_enabled",
+                          SystemManager::get_voice_wake_enabled());
+    cJSON_AddNumberToObject(root, "wake_sensitivity",
+                            SystemManager::get_voice_wake_sensitivity());
+    cJSON_AddBoolToObject(root, "tts_barge_in_enabled",
+                          SystemManager::get_voice_tts_barge_in_enabled());
+    cJSON_AddNumberToObject(root, "continuous_ms",
+                            SystemManager::get_voice_continuous_ms());
+}
+
+// GET /api/voice/settings
+static esp_err_t get_voice_settings_handler(httpd_req_t *req) {
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "ok");
+    add_voice_settings_payload(root);
+
+    const char* json = cJSON_PrintUnformatted(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free((void*)json);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+// POST /api/voice/settings
+static esp_err_t post_voice_settings_handler(httpd_req_t *req) {
+    char* body = receive_request_body(req, 512);
+    if (!body) {
+        return send_json_error(req, "400 Bad Request", "invalid_body",
+                               "Invalid voice settings payload");
+    }
+
+    cJSON* root = cJSON_Parse(body);
+    free(body);
+    if (!root) {
+        return send_json_error(req, "400 Bad Request", "invalid_json",
+                               "Invalid JSON");
+    }
+
+    using smart_fridge::system::SystemManager;
+    cJSON* wake = cJSON_GetObjectItem(root, "wake_enabled");
+    cJSON* sens = cJSON_GetObjectItem(root, "wake_sensitivity");
+    cJSON* barge = cJSON_GetObjectItem(root, "tts_barge_in_enabled");
+    cJSON* cont = cJSON_GetObjectItem(root, "continuous_ms");
+
+    if (cJSON_IsBool(wake)) {
+        SystemManager::set_voice_wake_enabled(cJSON_IsTrue(wake));
+    }
+    if (cJSON_IsNumber(sens)) {
+        SystemManager::set_voice_wake_sensitivity(sens->valueint);
+    }
+    if (cJSON_IsBool(barge)) {
+        SystemManager::set_voice_tts_barge_in_enabled(cJSON_IsTrue(barge));
+    }
+    if (cJSON_IsNumber(cont)) {
+        SystemManager::set_voice_continuous_ms(cont->valueint);
+    }
+    cJSON_Delete(root);
+
+    audio_hal_configure_wake_word(
+        SystemManager::get_voice_wake_enabled(),
+        SystemManager::get_voice_wake_sensitivity(),
+        SystemManager::get_voice_tts_barge_in_enabled());
+
+    cJSON* resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "status", "ok");
+    add_voice_settings_payload(resp);
+    const char* json = cJSON_PrintUnformatted(resp);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, strlen(json));
+    free((void*)json);
+    cJSON_Delete(resp);
     return ESP_OK;
 }
 
@@ -1133,6 +1211,8 @@ void register_api_routes(httpd_handle_t server) {
     httpd_uri_t uri_post_voice_cfg = { .uri = "/api/voice/config", .method = HTTP_POST, .handler = post_voice_config_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_post_voice_cfg_del = { .uri = "/api/voice/config/delete", .method = HTTP_POST, .handler = post_voice_config_delete_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_post_voice_test_tts = { .uri = "/api/voice/test-tts", .method = HTTP_POST, .handler = post_voice_test_tts_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_get_voice_settings = { .uri = "/api/voice/settings", .method = HTTP_GET, .handler = get_voice_settings_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
+    httpd_uri_t uri_post_voice_settings = { .uri = "/api/voice/settings", .method = HTTP_POST, .handler = post_voice_settings_handler, .user_ctx = NULL, .is_websocket = false, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
     httpd_uri_t uri_ws = { .uri = "/ws", .method = HTTP_GET, .handler = ws_handler, .user_ctx = NULL, .is_websocket = true, .handle_ws_control_frames = false, .supported_subprotocol = NULL };
 
     httpd_register_uri_handler(server, &uri_get_inv);
@@ -1156,6 +1236,8 @@ void register_api_routes(httpd_handle_t server) {
     httpd_register_uri_handler(server, &uri_post_voice_cfg);
     httpd_register_uri_handler(server, &uri_post_voice_cfg_del);
     httpd_register_uri_handler(server, &uri_post_voice_test_tts);
+    httpd_register_uri_handler(server, &uri_get_voice_settings);
+    httpd_register_uri_handler(server, &uri_post_voice_settings);
     httpd_register_uri_handler(server, &uri_ws);
 }
 

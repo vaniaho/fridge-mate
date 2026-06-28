@@ -79,7 +79,7 @@ extern "C" esp_err_t web_panel_start(void) {
     }
 
     httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
-    http_config.max_uri_handlers = 36;
+    http_config.max_uri_handlers = 40;
     http_config.stack_size = 16384;
     http_config.max_open_sockets = 3;
     http_config.lru_purge_enable = true;
@@ -95,7 +95,7 @@ extern "C" esp_err_t web_panel_start(void) {
     }
 
     httpd_ssl_config_t https_config = HTTPD_SSL_CONFIG_DEFAULT();
-    https_config.httpd.max_uri_handlers = 36;
+    https_config.httpd.max_uri_handlers = 40;
     https_config.httpd.stack_size = 16384;
     https_config.httpd.max_open_sockets = 2;
     https_config.httpd.lru_purge_enable = true;

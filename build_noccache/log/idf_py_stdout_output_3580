@@ -1,0 +1,10 @@
+Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\python_env\idf5.5_py3.12_env\Scripts\python.exe -DESP_PLATFORM=1 -DCCACHE_ENABLE=0 -DCMAKE_MAKE_PROGRAM=C:/Espressif/tools/ninja/1.12.1/ninja.exe -DCCACHE_ENABLE=0 C:\Code\ESP\smart_fridge
+-- IDF_TARGET is not set, guessed 'esp32p4' from sdkconfig 'C:/Code/ESP/smart_fridge/sdkconfig'
+-- Found Git: C:/Program Files/Git/cmd/git.exe (found version "2.47.1.windows.2")
+-- Minimal build - OFF
+-- The C compiler identification is unknown
+-- The CXX compiler identification is unknown
+-- The ASM compiler identification is unknown
+-- Found assembler: riscv32-esp-elf-gcc
+-- Warning: Did not find file Compiler/-ASM
+-- Configuring incomplete, errors occurred!

@@ -430,7 +430,10 @@ extern "C" void app_main(void) {
             }
         });
     if (audio_err == ESP_OK) {
-        audio_hal_start_wake_word();
+        audio_hal_configure_wake_word(
+            smart_fridge::system::SystemManager::get_voice_wake_enabled(),
+            smart_fridge::system::SystemManager::get_voice_wake_sensitivity(),
+            smart_fridge::system::SystemManager::get_voice_tts_barge_in_enabled());
         ESP_LOGI(TAG, "  音频采集/播放已就绪");
     }
 

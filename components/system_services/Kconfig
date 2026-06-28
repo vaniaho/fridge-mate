@@ -195,6 +195,88 @@ menu "Smart Fridge Configuration"
                 Buffer size for storing LLM API key.
     endmenu
 
+    menu "Audio Wake Word"
+        config SMART_FRIDGE_WAKE_WORD_MODEL_NAME
+            string "WakeNet model name"
+            default "wn9_nihaoxiaozhi_tts"
+            help
+                WakeNet model name loaded from the "model" partition. Leave the
+                bundled default unless a custom wake-word model such as
+                "xiaoxianxiaoxian" is flashed to the model partition.
+
+        config SMART_FRIDGE_WAKE_WORD_DETECTION_MODE
+            int "WakeNet detection mode"
+            default 95
+            range 90 95
+            help
+                WakeNet detection sensitivity. Higher values are stricter and
+                reduce false triggers. ESP-SR 2.4.x WakeNet supports 90 and 95
+                for the 1-channel direct interface.
+
+        config SMART_FRIDGE_WAKE_WORD_TASK_STACK_SIZE
+            int "Wake word task stack size"
+            default 24576
+            range 8192 32768
+            help
+                Stack size for the resident WakeNet task. WakeNet model setup,
+                logging, and audio frame processing need more stack than a small
+                polling task; keep this at 24 KB unless RAM pressure requires
+                careful tuning.
+
+        config SMART_FRIDGE_WAKE_WORD_IDLE_HITS
+            int "Idle consecutive wake hits"
+            default 1
+            range 1 4
+            help
+                Number of WakeNet hits required while the device is idle.
+
+        config SMART_FRIDGE_WAKE_WORD_TTS_HITS
+            int "TTS barge-in consecutive wake hits"
+            default 2
+            range 1 5
+            help
+                Number of WakeNet hits required while TTS is playing. Keep this
+                stricter than idle to reduce speaker-echo false triggers.
+
+        config SMART_FRIDGE_WAKE_WORD_MIN_SNR
+            int "Idle minimum RMS/noise ratio"
+            default 3
+            range 1 10
+            help
+                Minimum RMS to noise-floor ratio required for accepting a wake
+                hit while idle.
+
+        config SMART_FRIDGE_WAKE_WORD_TTS_MIN_SNR
+            int "TTS minimum RMS/noise ratio"
+            default 6
+            range 1 16
+            help
+                Stricter RMS to noise-floor ratio required while TTS is playing.
+
+        config SMART_FRIDGE_WAKE_WORD_DEBUG_ENERGY_DETECT
+            bool "Enable debug energy-based wake detector"
+            default n
+            help
+                Development-only wake detector. It triggers on sustained loud
+                speech/noise so the wake-word event path can be tested before
+                a real WakeNet or TFLite Micro keyword model is integrated.
+
+        config SMART_FRIDGE_WAKE_WORD_RMS_THRESHOLD
+            int "Debug wake detector RMS threshold"
+            default 1800
+            depends on SMART_FRIDGE_WAKE_WORD_DEBUG_ENERGY_DETECT
+            help
+                Minimum RMS for the development-only energy detector.
+
+        config SMART_FRIDGE_WAKE_WORD_MIN_VOICE_MS
+            int "Debug wake detector minimum voice duration"
+            default 520
+            depends on SMART_FRIDGE_WAKE_WORD_DEBUG_ENERGY_DETECT
+            help
+                Sustained voiced duration required before the debug detector
+                emits a wake event.
+    endmenu
+
     menu "Weather API Settings"
         config SMART_FRIDGE_DEFAULT_WEATHER_URL
             string "Default Weather API URL"

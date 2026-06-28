@@ -66,6 +66,7 @@ typedef struct {
     char tts_text[TTS_TEXT_MAX_LEN];  // 需要语音播报的文本
     int ui_action_id;                 // 需要UI执行的动作ID (由C解析后给出)
     bool tts_already_queued;           // 流式链路已将句子送入 TTS，避免重复播报
+    bool keep_listening;               // 播报完成后是否自动继续聆听（如等待“确认/取消”）
 } llm_response_payload_t;
 
 typedef struct {

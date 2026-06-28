@@ -8,10 +8,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/ringbuf.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "realtime_client.hpp"
+#include "sdkconfig.h"
 #include "system_events.h"
 #include "tts_client.hpp"
+#include "wake_word_engine.hpp"
 
 #include <algorithm>
 #include <array>
@@ -47,6 +50,10 @@ constexpr int NO_SPEECH_TIMEOUT_MS = 5000;
 constexpr int MAX_UTTERANCE_MS = 15000;
 constexpr size_t TTS_QUEUE_LENGTH = 12;
 constexpr size_t ASR_PACKET_BYTES = 6400;  // 200 ms mono PCM
+constexpr int WAKE_WORD_COOLDOWN_MS = 2000;
+constexpr int WAKE_WORD_RESUME_DELAY_MS = 350;
+constexpr int WAKE_WORD_LOG_INTERVAL_FRAMES = 250;
+constexpr int WAKE_WORD_HIT_WINDOW_MS = 900;
 
 enum class input_source_t : uint8_t {
     HARDWARE,
@@ -87,6 +94,11 @@ static std::atomic<bool> s_playback_input_done{false};
 static std::atomic<bool> s_playback_error{false};
 static std::atomic<bool> s_playback_done_notified{false};
 static std::atomic<uint32_t> s_tts_generation{0};
+static std::atomic<bool> s_wake_word_enabled{true};
+static std::atomic<int> s_wake_word_sensitivity{70};
+static std::atomic<bool> s_tts_barge_in_enabled{true};
+static std::atomic<int> s_next_no_speech_timeout_ms{NO_SPEECH_TIMEOUT_MS};
+static std::atomic<int> s_active_no_speech_timeout_ms{NO_SPEECH_TIMEOUT_MS};
 
 static audio_hal_event_cb_t s_event_cb = nullptr;
 static audio_hal_pcm_output_cb_t s_pcm_output_cb = nullptr;
@@ -96,6 +108,7 @@ static RingbufHandle_t s_capture_ring = nullptr;
 static RingbufHandle_t s_external_capture_ring = nullptr;
 static RingbufHandle_t s_playback_ring = nullptr;
 static QueueHandle_t s_tts_queue = nullptr;
+static SemaphoreHandle_t s_microphone_mutex = nullptr;
 static int s_output_volume = DEFAULT_OUTPUT_VOLUME;
 
 static TaskHandle_t s_wake_word_task = nullptr;
@@ -104,6 +117,7 @@ static TaskHandle_t s_asr_task = nullptr;
 static TaskHandle_t s_realtime_task = nullptr;
 static TaskHandle_t s_tts_worker_task = nullptr;
 static TaskHandle_t s_playback_task = nullptr;
+static std::atomic<bool> s_wake_word_running{false};
 
 void emit_event(audio_hal_event_t event, const char *data)
 {
@@ -223,6 +237,68 @@ int calculate_rms(const uint8_t *pcm, size_t size)
     return static_cast<int>(sqrt(static_cast<double>(sum) / sample_count));
 }
 
+esp_err_t read_microphone_frame(uint8_t *buffer, size_t size,
+                                TickType_t lock_timeout)
+{
+    if (!s_microphone || !s_microphone_mutex) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_microphone_mutex, lock_timeout) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    const int ret = esp_codec_dev_read(s_microphone, buffer, size);
+    xSemaphoreGive(s_microphone_mutex);
+    return ret == ESP_CODEC_DEV_OK ? ESP_OK : ESP_FAIL;
+}
+
+bool wake_word_should_pause()
+{
+    if (!s_wake_word_enabled.load()) {
+        return true;
+    }
+    if (s_playing_tts.load() && !s_realtime_playback.load() &&
+        !s_tts_barge_in_enabled.load()) {
+        return true;
+    }
+    return s_listening.load() || s_capture_running.load() ||
+           s_asr_running.load() || s_realtime_running.load() ||
+           s_realtime_playback.load();
+}
+
+bool wake_word_hit_passes_gate(const wake_word_result_t &result,
+                               bool during_tts)
+{
+    if (!result.detected) {
+        return false;
+    }
+
+    const int noise = std::max(result.noise_floor, 1);
+    const int min_ratio = during_tts
+                              ? CONFIG_SMART_FRIDGE_WAKE_WORD_TTS_MIN_SNR
+                              : CONFIG_SMART_FRIDGE_WAKE_WORD_MIN_SNR;
+    const int sensitivity = std::min(100, std::max(
+        0, s_wake_word_sensitivity.load()));
+    const int sensitivity_offset = (50 - sensitivity) / 20;
+    const int adjusted_ratio = std::max(1, min_ratio + sensitivity_offset);
+    if (result.rms < noise * adjusted_ratio) {
+        ESP_LOGD(TAG, "Wake-word hit rejected by SNR gate: rms=%d noise=%d ratio=%d",
+                 result.rms, result.noise_floor, adjusted_ratio);
+        return false;
+    }
+    return true;
+}
+
+int clamp_listening_timeout_ms(int timeout_ms)
+{
+    if (timeout_ms < 1000) {
+        return 1000;
+    }
+    if (timeout_ms > 30000) {
+        return 30000;
+    }
+    return timeout_ms;
+}
+
 bool read_mono_input_frame(uint8_t *buffer, size_t capacity,
                            size_t &bytes_read, TickType_t timeout)
 {
@@ -252,7 +328,9 @@ bool read_mono_input_frame(uint8_t *buffer, size_t capacity,
 bool is_local_business_command(const std::string &text)
 {
     static const char *keywords[] = {
-        "放入", "放进", "存入", "添加", "拿出", "取出", "删除",
+        "放入", "放进", "放进去", "放到冰箱", "放冰箱", "存入",
+        "存进去", "添加", "加入", "加进去", "拿出", "拿出来",
+        "取出", "删除", "消耗", "吃掉", "用掉",
         "库存", "冰箱里", "有什么", "临期", "过期", "保质期",
         "吃什么", "推荐菜", "食谱", "确认", "取消",
     };
@@ -360,10 +438,109 @@ private:
 static void wake_word_task(void *parameters)
 {
     (void)parameters;
-    ESP_LOGI(TAG, "Wake-word consumer ready (detector adapter pending)");
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    wake_word_engine_t engine;
+    std::array<uint8_t, HARDWARE_FRAME_BYTES> frame = {};
+    std::array<uint8_t, MONO_FRAME_BYTES> mono = {};
+    TickType_t cooldown_until = 0;
+    TickType_t last_hit_tick = 0;
+    bool was_paused = false;
+    int consecutive_hits = 0;
+    uint32_t frames = 0;
+
+    engine.init();
+    ESP_LOGI(TAG, "Wake-word task started");
+    while (s_wake_word_running.load()) {
+        if (wake_word_should_pause()) {
+            if (!was_paused) {
+                ESP_LOGI(TAG, "Wake-word detector paused");
+                was_paused = true;
+            }
+            engine.reset();
+            vTaskDelay(pdMS_TO_TICKS(WAKE_WORD_RESUME_DELAY_MS));
+            continue;
+        }
+        if (was_paused) {
+            ESP_LOGI(TAG, "Wake-word detector resumed");
+            was_paused = false;
+        }
+
+        const esp_err_t err = read_microphone_frame(
+            frame.data(), frame.size(), pdMS_TO_TICKS(40));
+        if (err == ESP_ERR_TIMEOUT) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Wake-word microphone read failed: %s",
+                     esp_err_to_name(err));
+            engine.reset();
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+        }
+
+        size_t mono_written = 0;
+        stereo_to_mono_left(frame.data(), frame.size(), mono.data(),
+                            mono.size(), &mono_written);
+        const wake_word_result_t result =
+            engine.process_16k_mono(mono.data(), mono_written);
+        const bool during_tts = s_playing_tts.load() &&
+                                !s_realtime_playback.load();
+
+        if ((++frames % WAKE_WORD_LOG_INTERVAL_FRAMES) == 0) {
+            ESP_LOGD(TAG, "Wake-word ready=%d score=%d rms=%d noise=%d tts=%d stack_free=%u",
+                     result.engine_ready, result.score, result.rms,
+                     result.noise_floor, during_tts,
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+        }
+
+        const TickType_t now = xTaskGetTickCount();
+        if (static_cast<int32_t>(now - cooldown_until) < 0) {
+            consecutive_hits = 0;
+            continue;
+        }
+
+        if (wake_word_hit_passes_gate(result, during_tts)) {
+            if (static_cast<int32_t>(now - last_hit_tick) >
+                static_cast<int32_t>(pdMS_TO_TICKS(WAKE_WORD_HIT_WINDOW_MS))) {
+                consecutive_hits = 0;
+            }
+            last_hit_tick = now;
+            ++consecutive_hits;
+        } else if (result.detected) {
+            consecutive_hits = 0;
+        }
+
+        const int required_hits =
+            during_tts ? CONFIG_SMART_FRIDGE_WAKE_WORD_TTS_HITS
+                       : CONFIG_SMART_FRIDGE_WAKE_WORD_IDLE_HITS;
+        if (consecutive_hits >= required_hits) {
+            ESP_LOGI(TAG, "Wake-word detected: wake_id=%d hits=%d score=%d rms=%d noise=%d tts=%d",
+                     result.wake_id, consecutive_hits, result.score,
+                     result.rms, result.noise_floor, during_tts);
+            if (during_tts) {
+                audio_hal_stop_tts();
+                for (int retry = 0; retry < 60 && s_playing_tts.load();
+                     ++retry) {
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                }
+            }
+            emit_event(AUDIO_EVT_WAKE_WORD, nullptr);
+            if (send_system_event(EVT_WAKE_WORD_DETECTED, nullptr, 0) !=
+                ESP_OK) {
+                ESP_LOGW(TAG, "Failed to dispatch wake-word event");
+            }
+            cooldown_until =
+                now + pdMS_TO_TICKS(WAKE_WORD_COOLDOWN_MS);
+            consecutive_hits = 0;
+            engine.reset();
+            vTaskDelay(pdMS_TO_TICKS(250));
+        }
     }
+
+    engine.shutdown();
+    s_wake_word_task = nullptr;
+    ESP_LOGI(TAG, "Wake-word task stopped");
+    vTaskDelete(nullptr);
 }
 
 static void capture_task(void *parameters)
@@ -373,10 +550,15 @@ static void capture_task(void *parameters)
     uint32_t dropped_frames = 0;
 
     while (s_capture_running.load()) {
-        const int ret =
-            esp_codec_dev_read(s_microphone, frame.data(), frame.size());
-        if (ret != ESP_CODEC_DEV_OK) {
-            ESP_LOGE(TAG, "Microphone read failed: 0x%x", ret);
+        const esp_err_t err = read_microphone_frame(
+            frame.data(), frame.size(), pdMS_TO_TICKS(200));
+        if (err == ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "Microphone read lock timeout");
+            continue;
+        }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Microphone read failed: %s",
+                     esp_err_to_name(err));
             s_capture_running.store(false);
             break;
         }
@@ -400,6 +582,8 @@ static void streaming_asr_task(void *parameters)
     bool speech_started = false;
     int total_ms = 0;
     int silence_ms = 0;
+    const int no_speech_timeout_ms =
+        s_active_no_speech_timeout_ms.load();
 
     const asr_audio_source_t source =
         [&](uint8_t *buffer, size_t capacity, size_t &bytes_read,
@@ -437,7 +621,7 @@ static void streaming_asr_task(void *parameters)
             is_last = s_asr_finish_requested.load() ||
                       (speech_started && silence_ms >= END_SILENCE_MS) ||
                       (!speech_started &&
-                       total_ms >= NO_SPEECH_TIMEOUT_MS) ||
+                       total_ms >= no_speech_timeout_ms) ||
                       total_ms >= MAX_UTTERANCE_MS;
             if (is_last) {
                 s_capture_running.store(false);
@@ -753,6 +937,8 @@ esp_err_t start_input_session(input_source_t source)
                    : s_capture_ring);
     s_asr_finish_requested.store(false);
     s_asr_cancel_requested.store(false);
+    s_active_no_speech_timeout_ms.store(clamp_listening_timeout_ms(
+        s_next_no_speech_timeout_ms.exchange(NO_SPEECH_TIMEOUT_MS)));
     s_listening.store(true);
     s_capture_running.store(source == input_source_t::HARDWARE);
     emit_event(AUDIO_EVT_LISTENING_START, nullptr);
@@ -809,8 +995,9 @@ esp_err_t audio_hal_init(void)
         create_audio_ring(EXTERNAL_CAPTURE_RING_SIZE);
     s_playback_ring = create_audio_ring(PLAYBACK_RING_SIZE);
     s_tts_queue = xQueueCreate(TTS_QUEUE_LENGTH, sizeof(tts_queue_item_t));
+    s_microphone_mutex = xSemaphoreCreateMutex();
     if (!s_capture_ring || !s_external_capture_ring ||
-        !s_playback_ring || !s_tts_queue) {
+        !s_playback_ring || !s_tts_queue || !s_microphone_mutex) {
         return ESP_ERR_NO_MEM;
     }
 
@@ -850,20 +1037,47 @@ esp_err_t audio_hal_start_wake_word(void)
     if (s_wake_word_task) {
         return ESP_OK;
     }
-    return xTaskCreate(wake_word_task, "wake_word", 4096, nullptr, 3,
-                       &s_wake_word_task) == pdPASS
-               ? ESP_OK
-               : ESP_FAIL;
+    s_wake_word_running.store(true);
+    if (xTaskCreate(wake_word_task, "wake_word",
+                    CONFIG_SMART_FRIDGE_WAKE_WORD_TASK_STACK_SIZE, nullptr, 3,
+                    &s_wake_word_task) != pdPASS) {
+        s_wake_word_running.store(false);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 
 esp_err_t audio_hal_stop_wake_word(void)
 {
     using namespace smart_fridge::audio;
     if (s_wake_word_task) {
-        vTaskDelete(s_wake_word_task);
-        s_wake_word_task = nullptr;
+        s_wake_word_running.store(false);
+        for (int retry = 0; retry < 100 && s_wake_word_task; ++retry) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        return s_wake_word_task ? ESP_ERR_TIMEOUT : ESP_OK;
     }
     return ESP_OK;
+}
+
+esp_err_t audio_hal_configure_wake_word(bool enabled, int sensitivity,
+                                        bool tts_barge_in_enabled)
+{
+    using namespace smart_fridge::audio;
+    if (sensitivity < 0) {
+        sensitivity = 0;
+    }
+    if (sensitivity > 100) {
+        sensitivity = 100;
+    }
+    s_wake_word_enabled.store(enabled);
+    s_wake_word_sensitivity.store(sensitivity);
+    s_tts_barge_in_enabled.store(tts_barge_in_enabled);
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+    return enabled ? audio_hal_start_wake_word()
+                   : audio_hal_stop_wake_word();
 }
 
 esp_err_t audio_hal_start_listening(void)
@@ -881,6 +1095,14 @@ esp_err_t audio_hal_stop_listening(void)
             s_external_input_done.store(true);
         }
     }
+    return ESP_OK;
+}
+
+esp_err_t audio_hal_set_next_listening_timeout_ms(int timeout_ms)
+{
+    using namespace smart_fridge::audio;
+    s_next_no_speech_timeout_ms.store(
+        clamp_listening_timeout_ms(timeout_ms));
     return ESP_OK;
 }
 

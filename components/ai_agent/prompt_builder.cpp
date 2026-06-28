@@ -33,11 +33,12 @@ std::string build_system_prompt(const llm_context_cache_t& ctx) {
     ss << "    \"target_item\": \"食材名称(如苹果, 仅在ADD/REMOVE时使用)\",\n";
     ss << "    \"category\": \"食材分类(如水果/蔬菜/肉禽/海鲜/蛋奶/豆制品/主食/调味品/饮品/零食/冻品, 仅在ADD时使用)\",\n";
     ss << "    \"expire_days\": 保质期天数(整数, 仅在ADD时使用, 根据食材类型合理估算),\n";
-    ss << "    \"quantity\": 数量(整数, 仅在ADD/REMOVE时使用)\n";
+    ss << "    \"quantity\": 数量(整数, 仅在ADD/REMOVE时使用),\n";
+    ss << "    \"unit\": \"用户说出的量词(如个/根/盒/袋/瓶, 仅用于播报确认，可省略)\"\n";
     ss << "}\n";
     ss << "当一句话包含多个存入/取出操作时，禁止返回顶层JSON数组，必须返回：\n";
     ss << "{\"action\":\"BATCH\",\"tts_reply\":\"简洁确认提示\",\"actions\":[";
-    ss << "{\"action\":\"ADD或REMOVE\",\"target_item\":\"食材\",\"category\":\"分类\",\"expire_days\":天数,\"quantity\":数量}";
+    ss << "{\"action\":\"ADD或REMOVE\",\"target_item\":\"食材\",\"category\":\"分类\",\"expire_days\":天数,\"quantity\":数量,\"unit\":\"量词\"}";
     ss << "]}\n";
     ss << "BATCH.actions 中只允许 ADD 或 REMOVE，每种食材一个动作。\n";
     ss << "当用户问\"今天吃什么\"或\"推荐菜品\"等问题时，请结合上面的可做菜品推荐来回答，action设为\"RECIPE\"。\n";

@@ -349,6 +349,32 @@
                 </div>
 
                 <div class="settings-form glass-panel-inner" style="margin-top: 24px;">
+                    <form id="voice-runtime-form">
+                        <h3>语音交互设置</h3>
+                        <label class="voice-play-toggle">
+                            <input type="checkbox" id="voice-wake-enabled">
+                            启用本地唤醒
+                        </label>
+                        <label class="voice-play-toggle">
+                            <input type="checkbox" id="voice-barge-enabled">
+                            TTS 播放中允许唤醒打断
+                        </label>
+                        <div class="input-group">
+                            <label>唤醒灵敏度：<span id="voice-sensitivity-value">70%</span></label>
+                            <input type="range" id="voice-sensitivity" min="0" max="100" step="1">
+                        </div>
+                        <div class="input-group">
+                            <label>连续对话窗口：<span id="voice-continuous-value">10 秒</span></label>
+                            <input type="range" id="voice-continuous" min="0" max="30" step="1">
+                        </div>
+                        <p class="text-muted">连续对话窗口内，TTS 播完后无需再次说唤醒词，可直接追问或确认。</p>
+                        <div class="modal-actions">
+                            <button type="submit" class="btn btn-primary">保存语音设置</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="settings-form glass-panel-inner" style="margin-top: 24px;">
                     <form id="weather-form">
                         <h3>天气 API 配置</h3>
                         <div class="input-group">
